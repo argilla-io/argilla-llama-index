@@ -160,7 +160,6 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
                 f" and the current `FeedbackDataset` fields are {[field.name for field in self.dataset.fields]}."
             )
         
-        self.field_names = [field.name for field in self.dataset.fields]
         self.events_data: Dict[str, List[CBEvent]] = defaultdict(list)
         self._events_to_trace: List[CBEventType] = [
             CBEventType.EMBEDDING, 
@@ -171,6 +170,7 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
             CBEventType.TEMPLATING]
         self.event_map_id_to_name = {}
         self.components_to_log = ["embedding", "retrieve", "llm", "synthesize", "templating"]
+        self._ignore_components_in_tree = ["templating"]
 
         # TODO: If we have a component more than once, properties currently don't account for those after the first one and get overwritten
     def _add_missing_metadata_properties(self, dataset, is_new_dataset_created) -> None:
@@ -184,31 +184,43 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
                 title = "LLM Time"
             dataset.add_metadata_property(
                 rg.FloatMetadataProperty(name=property, title=title))
-        if not is_new_dataset_created:
-            warnings.warn(
-                (
-                    f"The dataset given was missing some required metadata properties. "
-                    f"Missing properties were {missing_metadata_properties}. "
-                    f"Properties have been added to the dataset with "
-                ),
+            if not is_new_dataset_created:
+                warnings.warn(
+                    (
+                        f"The dataset given was missing some required metadata properties. "
+                        f"Missing properties were {missing_metadata_properties}. "
+                        f"Properties have been added to the dataset with "
+                    ),
                 )
+                
+    def _check_components_for_tree(self, tree_structure_dict):
+        final_components_in_tree = self.components_to_log + ["query", "root"]
+        for component in self._ignore_components_in_tree:
+            if component in final_components_in_tree:
+                final_components_in_tree.remove(component)
+        for key in list(tree_structure_dict.keys()):
+            if key.strip("0") not in final_components_in_tree:
+                del tree_structure_dict[key]
+        for key, value in tree_structure_dict.items():
+            if isinstance(value, list):
+                tree_structure_dict[key] = [element for element in value if element.strip("0") in final_components_in_tree]
+        return tree_structure_dict
+                
+    def _create_tree(self, tree_structure_dict, data_to_log):
+        tree_structure_dict = self._check_components_for_tree(tree_structure_dict)
+        root_node = list(tree_structure_dict.keys())[1]
+        def print_tree_structure(node, tree_dict, indent=0, output="", root_node=root_node):
+            node_time = str(data_to_log[f"{node}_time"])
+            output += "│   " * indent + "│--- " + node.upper().strip("0") + "--->" + f"<span style='color:green'>**{node_time}**</span>" + "\n"
+            if node in tree_dict:
+                for child in tree_dict[node]:
+                    output = print_tree_structure(child, tree_dict, indent + 1, output)
+            return output
+            
+        tree_structure_str = print_tree_structure(root_node, tree_structure_dict)
 
-    def start_trace(self, trace_id: Optional[str] = None) -> None:
-        """Launch a trace."""
-        self._trace_map = defaultdict(list)
-        self._cur_trace_id = trace_id
-        self._start_time = datetime.now()
-        self.events_data.clear()
-
-    def end_trace(
-        self,
-        trace_id: Optional[str] = None,
-        trace_map: Optional[Dict[str, List[str]]] = None,
-    ) -> None:
-        self._trace_map = trace_map or defaultdict(list)
-        self._end_time = datetime.now()
-        self._extract_and_log_info(self.events_data, trace_map)
-
+        return tree_structure_str
+            
     def _get_events_map_with_names(self, events_data, trace_map):
         """Get all event names."""
         event_ids_traced = set(trace_map.keys()) - {"root"}
@@ -258,10 +270,7 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
                 if event_name_reduced == "llm":
                     data_to_log[f"{event_name}_system_prompt"] = events_data[id][0].payload.get(EventPayload.MESSAGES)[0].content
                     data_to_log[f"{event_name}_model_name"] = events_data[id][0].payload.get(EventPayload.SERIALIZED)["model"]
-            
-            tree_str = _create_tree(events_trace_map, data_to_log)
-            print("NUMBER OF COMPONENTS USED: ", number_of_components_used)
-
+                        
             metadata_to_log = {}
 
             for keys in data_to_log.keys():
@@ -274,6 +283,8 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
                 for key, value in number_of_components_used.items():
                     metadata_to_log[f"number_of_{key}_used"] = value + 1
 
+            tree_str = self._create_tree(events_trace_map, data_to_log)
+            
             self.dataset.add_records(
             records=[
                 {
@@ -286,6 +297,22 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
                     },
                 ]
             )
+
+    def start_trace(self, trace_id: Optional[str] = None) -> None:
+        """Launch a trace."""
+        self._trace_map = defaultdict(list)
+        self._cur_trace_id = trace_id
+        self._start_time = datetime.now()
+        self.events_data.clear()
+
+    def end_trace(
+        self,
+        trace_id: Optional[str] = None,
+        trace_map: Optional[Dict[str, List[str]]] = None,
+    ) -> None:
+        self._trace_map = trace_map or defaultdict(list)
+        self._end_time = datetime.now()
+        self._extract_and_log_info(self.events_data, trace_map)
 
     def on_event_start(
         self,
@@ -324,16 +351,3 @@ def _calc_time(events_data, id) -> float:
     end_time = events_data[id][1].time  # Event end
     return _get_time_diff(start_time, end_time)
     
-def _create_tree(tree_structure_dict, data_to_log):
-    root_node = list(tree_structure_dict.keys())[1]
-    def print_tree_structure(node, tree_dict, indent=0, output="", root_node=root_node):
-        node_time = str(data_to_log[f"{node}_time"])
-        output += "│   " * indent + "│--- " + node.upper().strip("0") + "--->" + f"<span style='color:green'>**{node_time}**</span>" + "\n"
-        if node in tree_dict:
-            for child in tree_dict[node]:
-                output = print_tree_structure(child, tree_dict, indent + 1, output)
-        return output
-        
-    tree_structure_str = print_tree_structure(root_node, tree_structure_dict)
-
-    return tree_structure_str
