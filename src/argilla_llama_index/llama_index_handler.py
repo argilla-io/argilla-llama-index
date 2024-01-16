@@ -103,6 +103,7 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
                     name=self.dataset_name,
                     workspace=self.workspace_name,
                 )
+                is_new_dataset_created = False
             # If the dataset does not exist, create a new one with the given name
             else:
                 dataset = rg.FeedbackDataset(
@@ -131,6 +132,7 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
                 )
 
                 self.dataset = dataset.push_to_argilla(self.dataset_name)
+                is_new_dataset_created = True
                 warnings.warn(
                 (
                     f"No dataset with the name {self.dataset_name} was found in workspace "
@@ -140,7 +142,7 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
                     "named `response-feedback`."
                 ),
             )
-            self._add_missing_metadata_properties(self.dataset)
+            self._add_missing_metadata_properties(self.dataset, is_new_dataset_created)
 
         except Exception as e:
             raise FileNotFoundError(
@@ -159,7 +161,7 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
             )
         
         self.field_names = [field.name for field in self.dataset.fields]
-        self.events_dict: Dict[str, List[CBEvent]] = defaultdict(list)
+        self.events_data: Dict[str, List[CBEvent]] = defaultdict(list)
         self._events_to_trace: List[CBEventType] = [
             CBEventType.EMBEDDING, 
             CBEventType.LLM, 
@@ -171,22 +173,32 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
         self.components_to_log = ["embedding", "retrieve", "llm", "synthesize", "templating"]
 
         # TODO: If we have a component more than once, properties currently don't account for those after the first one and get overwritten
-    def _add_missing_metadata_properties(self, dataset) -> None:
+    def _add_missing_metadata_properties(self, dataset, is_new_dataset_created) -> None:
         import argilla as rg
         required_metadata_properties = ["total_time", "retrieve_time", "embedding_time", "synthesize_time", "templating_time", "llm_time"]
         existing_metadata_properties = [property.name for property in dataset.metadata_properties]
         missing_metadata_properties = [property for property in required_metadata_properties if property not in existing_metadata_properties]
         for property in missing_metadata_properties:
             title= " ".join([word.capitalize() for word in property.split('_')])
+            if title == "Llm Time":
+                title = "LLM Time"
             dataset.add_metadata_property(
                 rg.FloatMetadataProperty(name=property, title=title))
+        if not is_new_dataset_created:
+            warnings.warn(
+                (
+                    f"The dataset given was missing some required metadata properties. "
+                    f"Missing properties were {missing_metadata_properties}. "
+                    f"Properties have been added to the dataset with "
+                ),
+                )
 
     def start_trace(self, trace_id: Optional[str] = None) -> None:
         """Launch a trace."""
         self._trace_map = defaultdict(list)
         self._cur_trace_id = trace_id
         self._start_time = datetime.now()
-        self.events_dict.clear()
+        self.events_data.clear()
 
     def end_trace(
         self,
@@ -195,66 +207,72 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
     ) -> None:
         self._trace_map = trace_map or defaultdict(list)
         self._end_time = datetime.now()
-        self._extract_and_log_info(self.events_dict, trace_map)
+        self._extract_and_log_info(self.events_data, trace_map)
 
-    def _get_events_map_with_names(self, events_dict, trace_map):
+    def _get_events_map_with_names(self, events_data, trace_map):
         """Get all event names."""
         event_ids_traced = set(trace_map.keys()) - {"root"}
         event_ids_traced.update(*trace_map.values())
         self.event_map_id_to_name = {}
         for event_id in event_ids_traced:
-            event_name = str(events_dict[event_id][0].event_type).split(".")[1].lower()
+            event_name = str(events_data[event_id][0].event_type).split(".")[1].lower()
             while event_name in self.event_map_id_to_name.values():
                 event_name = event_name + "0" 
             self.event_map_id_to_name[event_id] = event_name
 
-        event_map_name_to_id = {value: key for key, value in self.event_map_id_to_name.items()}
         events_trace_map = {self.event_map_id_to_name.get(k, k): [self.event_map_id_to_name.get(v, v) for v in values] for k, values in trace_map.items()}
 
-        return events_trace_map, event_map_name_to_id, event_ids_traced
+        return events_trace_map, event_ids_traced
     
-    def _extract_and_log_info(self, events_dict, trace_map):
-        events_trace_map, event_map_name_to_id, event_ids_traced = self._get_events_map_with_names(events_dict, trace_map)
+    def _extract_and_log_info(self, events_data, trace_map):
+        events_trace_map, event_ids_traced = self._get_events_map_with_names(events_data, trace_map)
         root_node = trace_map["root"]
         data_to_log = {}
 
         if self.event_map_id_to_name[root_node[0]] == "query":
             # Event start
-            event = events_dict[root_node[0]][0]
+            event = events_data[root_node[0]][0]
             data_to_log["query"] = event.payload.get(EventPayload.QUERY_STR)
             query_start_time = event.time
             # Event end
-            event = events_dict[root_node[0]][1]
+            event = events_data[root_node[0]][1]
             data_to_log["response"] = event.payload.get(EventPayload.RESPONSE).response
             query_end_time = event.time
             data_to_log["query_time"] = _get_time_diff(query_start_time, query_end_time)
 
             event_ids_traced.remove(root_node[0])     # remove root id from event_ids_traced
 
+            number_of_components_used = defaultdict(int)
             for id in event_ids_traced:
                 event_name = self.event_map_id_to_name[id]
                 if event_name.endswith("0"):
                     event_name_reduced = event_name.strip("0")
+                    number_of_components_used[event_name_reduced] += 1
                 else:
                     event_name_reduced = event_name
 
                 for component in self.components_to_log:
                     if event_name_reduced == component:
-                        data_to_log[f"{event_name}_time"] = _calc_time(events_dict, id)
+                        data_to_log[f"{event_name}_time"] = _calc_time(events_data, id)
 
                 if event_name_reduced == "llm":
-                    data_to_log[f"{event_name}_system_prompt"] = events_dict[id][0].payload.get(EventPayload.MESSAGES)[0].content
-                    data_to_log[f"{event_name}_model_name"] = events_dict[id][0].payload.get(EventPayload.SERIALIZED)["model"]
+                    data_to_log[f"{event_name}_system_prompt"] = events_data[id][0].payload.get(EventPayload.MESSAGES)[0].content
+                    data_to_log[f"{event_name}_model_name"] = events_data[id][0].payload.get(EventPayload.SERIALIZED)["model"]
             
-            events_names_traced = list({k: self.event_map_id_to_name[k] for k in event_ids_traced}.values())
             tree_str = _create_tree(events_trace_map, data_to_log)
+            print("NUMBER OF COMPONENTS USED: ", number_of_components_used)
 
             metadata_to_log = {}
+
             for keys in data_to_log.keys():
                 if keys == "query_time":
                     metadata_to_log["total_time"] = data_to_log[keys]
                 elif keys.endswith("_time"):
                     metadata_to_log[keys] = data_to_log[keys]
+            
+            if len(number_of_components_used) > 0:
+                for key, value in number_of_components_used.items():
+                    metadata_to_log[f"number_of_{key}_used"] = value + 1
 
             self.dataset.add_records(
             records=[
@@ -279,7 +297,7 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
     ) -> None:
         """Run handlers when an event starts."""
         event = CBEvent(event_type, payload=payload, id_=event_id)
-        self.events_dict[event_id].append(event)
+        self.events_data[event_id].append(event)
 
     def on_event_end(
         self,
@@ -290,7 +308,7 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
     ) -> None:
         """Run handlers when an event ends."""
         event = CBEvent(event_type, payload=payload, id_=event_id)
-        self.events_dict[event_id].append(event)
+        self.events_data[event_id].append(event)
 
 def _get_time_diff(event_1_time_str: str, event_2_time_str: str) -> float:
     """Get the time difference between two events."""
@@ -301,9 +319,9 @@ def _get_time_diff(event_1_time_str: str, event_2_time_str: str) -> float:
 
     return round((event_2_time - event_1_time).total_seconds(), 4)
 
-def _calc_time(events_dict, id) -> float:
-    start_time = events_dict[id][0].time  # Event start
-    end_time = events_dict[id][1].time  # Event end
+def _calc_time(events_data, id) -> float:
+    start_time = events_data[id][0].time  # Event start
+    end_time = events_data[id][1].time  # Event end
     return _get_time_diff(start_time, end_time)
     
 def _create_tree(tree_structure_dict, data_to_log):
