@@ -129,11 +129,7 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
                         guidelines="You're asked to rate the quality of the response and provide feedback.",
                         allow_extra_metadata=True,
                 )
-                dataset.add_metadata_property(
-                    rg.FloatMetadataProperty(
-                        name="total_time", title="Total Time"
-                    )
-                )
+
                 self.dataset = dataset.push_to_argilla(self.dataset_name)
                 warnings.warn(
                 (
@@ -144,6 +140,7 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
                     "named `response-feedback`."
                 ),
             )
+            self._add_missing_metadata_properties(self.dataset)
 
         except Exception as e:
             raise FileNotFoundError(
@@ -170,6 +167,19 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
             CBEventType.RETRIEVE, 
             CBEventType.SYNTHESIZE,
             CBEventType.TEMPLATING]
+        self.event_map_id_to_name = {}
+        self.components_to_log = ["embedding", "retrieve", "llm", "synthesize", "templating"]
+
+        # TODO: If we have a component more than once, properties currently don't account for those after the first one and get overwritten
+    def _add_missing_metadata_properties(self, dataset) -> None:
+        import argilla as rg
+        required_metadata_properties = ["total_time", "retrieve_time", "embedding_time", "synthesize_time", "templating_time", "llm_time"]
+        existing_metadata_properties = [property.name for property in dataset.metadata_properties]
+        missing_metadata_properties = [property for property in required_metadata_properties if property not in existing_metadata_properties]
+        for property in missing_metadata_properties:
+            title= " ".join([word.capitalize() for word in property.split('_')])
+            dataset.add_metadata_property(
+                rg.FloatMetadataProperty(name=property, title=title))
 
     def start_trace(self, trace_id: Optional[str] = None) -> None:
         """Launch a trace."""
@@ -191,48 +201,60 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
         """Get all event names."""
         event_ids_traced = set(trace_map.keys()) - {"root"}
         event_ids_traced.update(*trace_map.values())
-        event_map_id_to_name = {}
+        self.event_map_id_to_name = {}
         for event_id in event_ids_traced:
-            event_name = events_dict[event_id][0].event_type
-            event_map_id_to_name[event_id] = event_name
+            event_name = str(events_dict[event_id][0].event_type).split(".")[1].lower()
+            while event_name in self.event_map_id_to_name.values():
+                event_name = event_name + "0" 
+            self.event_map_id_to_name[event_id] = event_name
 
-        event_map_name_to_id = {value: key for key, value in event_map_id_to_name.items()}
-        events_trace_map = {event_map_id_to_name.get(k, k): [event_map_id_to_name.get(v, v) for v in values] for k, values in trace_map.items()}
+        event_map_name_to_id = {value: key for key, value in self.event_map_id_to_name.items()}
+        events_trace_map = {self.event_map_id_to_name.get(k, k): [self.event_map_id_to_name.get(v, v) for v in values] for k, values in trace_map.items()}
 
-        return events_trace_map, event_map_id_to_name, event_map_name_to_id, event_ids_traced
+        return events_trace_map, event_map_name_to_id, event_ids_traced
     
     def _extract_and_log_info(self, events_dict, trace_map):
-        events_trace_map, event_map_id_to_name, event_map_name_to_id, event_ids_traced = self._get_events_map_with_names(events_dict, trace_map)
+        events_trace_map, event_map_name_to_id, event_ids_traced = self._get_events_map_with_names(events_dict, trace_map)
         root_node = trace_map["root"]
         data_to_log = {}
-        if len(root_node) == 1:
-            if event_map_id_to_name[root_node[0]] == CBEventType.QUERY:
-                # Event start
-                event = events_dict[root_node[0]][0]
-                data_to_log["query"] = event.payload.get(EventPayload.QUERY_STR)
-                query_start_time = event.time
-                # Event end
-                event = events_dict[root_node[0]][1]
-                data_to_log["response"] = event.payload.get(EventPayload.RESPONSE).response
-                query_end_time = event.time
-                data_to_log["query_time"] = _get_time_diff(query_start_time, query_end_time)
+
+        if self.event_map_id_to_name[root_node[0]] == "query":
+            # Event start
+            event = events_dict[root_node[0]][0]
+            data_to_log["query"] = event.payload.get(EventPayload.QUERY_STR)
+            query_start_time = event.time
+            # Event end
+            event = events_dict[root_node[0]][1]
+            data_to_log["response"] = event.payload.get(EventPayload.RESPONSE).response
+            query_end_time = event.time
+            data_to_log["query_time"] = _get_time_diff(query_start_time, query_end_time)
+
             event_ids_traced.remove(root_node[0])     # remove root id from event_ids_traced
+
             for id in event_ids_traced:
-                if event_map_id_to_name[id] == CBEventType.EMBEDDING:
-                    data_to_log["embedding_time"] = _calc_time(events_dict, id)
-                if event_map_id_to_name[id] == CBEventType.RETRIEVE:
-                    data_to_log["retrieve_time"] = _calc_time(events_dict, id)
-                if event_map_id_to_name[id] == CBEventType.LLM:
-                    data_to_log["llm_time"] = _calc_time(events_dict, id)
-                    data_to_log["system_prompt"] = events_dict[id][0].payload.get(EventPayload.MESSAGES)[0].content
-                    data_to_log["model_name"] = events_dict[id][0].payload.get(EventPayload.SERIALIZED)["model"]
-                if event_map_id_to_name[id] == CBEventType.SYNTHESIZE:
-                    data_to_log["synthesize_time"] = _calc_time(events_dict, id)
-                if event_map_id_to_name[id] == CBEventType.TEMPLATING:
-                    data_to_log["templating_time"] = _calc_time(events_dict, id)
+                event_name = self.event_map_id_to_name[id]
+                if event_name.endswith("0"):
+                    event_name_reduced = event_name.strip("0")
+                else:
+                    event_name_reduced = event_name
+
+                for component in self.components_to_log:
+                    if event_name_reduced == component:
+                        data_to_log[f"{event_name}_time"] = _calc_time(events_dict, id)
+
+                if event_name_reduced == "llm":
+                    data_to_log[f"{event_name}_system_prompt"] = events_dict[id][0].payload.get(EventPayload.MESSAGES)[0].content
+                    data_to_log[f"{event_name}_model_name"] = events_dict[id][0].payload.get(EventPayload.SERIALIZED)["model"]
             
-            events_names_traced = list({k: event_map_id_to_name[k] for k in event_ids_traced}.values())
+            events_names_traced = list({k: self.event_map_id_to_name[k] for k in event_ids_traced}.values())
             tree_str = _create_tree(events_trace_map, data_to_log)
+
+            metadata_to_log = {}
+            for keys in data_to_log.keys():
+                if keys == "query_time":
+                    metadata_to_log["total_time"] = data_to_log[keys]
+                elif keys.endswith("_time"):
+                    metadata_to_log[keys] = data_to_log[keys]
 
             self.dataset.add_records(
             records=[
@@ -242,7 +264,7 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
                         "response": data_to_log["response"],
                         "time-details": tree_str
                         },
-                        "metadata": {"total_time": data_to_log["query_time"]},
+                        "metadata": metadata_to_log
                     },
                 ]
             )
@@ -254,16 +276,8 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
         event_id: Optional[str] = None,
         parent_id: Optional[str] = None,
         **kwargs: Any,
-    ) -> str:
-        """Store event start data by event type.
-
-        Args:
-            event_type (CBEventType): event type to store.
-            payload (Optional[Dict[str, Any]]): payload to store.
-            event_id (str): event id to store.
-            parent_id (str): parent event id.
-
-        """
+    ) -> None:
+        """Run handlers when an event starts."""
         event = CBEvent(event_type, payload=payload, id_=event_id)
         self.events_dict[event_id].append(event)
 
@@ -295,7 +309,8 @@ def _calc_time(events_dict, id) -> float:
 def _create_tree(tree_structure_dict, data_to_log):
     root_node = list(tree_structure_dict.keys())[1]
     def print_tree_structure(node, tree_dict, indent=0, output="", root_node=root_node):
-        output += "│   " * indent + "├── " + node.upper() + "\t\t\t           " + str(data_to_log[f"{node}_time"]) + "\n"
+        node_time = str(data_to_log[f"{node}_time"])
+        output += "│   " * indent + "│--- " + node.upper().strip("0") + "--->" + f"<span style='color:green'>**{node_time}**</span>" + "\n"
         if node in tree_dict:
             for child in tree_dict[node]:
                 output = print_tree_structure(child, tree_dict, indent + 1, output)
