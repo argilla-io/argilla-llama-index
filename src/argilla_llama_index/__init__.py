@@ -16,4 +16,4 @@ __version__ = "0.0.1-alpha"
 
 from argilla_llama_index.llama_index_handler import ArgillaCallbackHandler
 
-__all__ = ["ArgillaCallback"]
+__all__ = ["ArgillaCallbackHandler"]

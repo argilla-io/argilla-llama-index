@@ -1,0 +1,47 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "argilla-llama-index"
+description = "Argilla-Llama Index Integration"
+readme = "README.md"
+requires-python = ">=3.8"
+license = "MIT"
+keywords = ["annotation", "llm", "monitoring"]
+authors = [{ name = "Argilla", email = "admin@argilla.io" }]
+classifiers = [
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+]
+dependencies = [
+    "argilla >= 1.18.0",
+    "llama-index >= 0.9.32",
+    "packaging >= 23.2",
+    "typing-extensions >= 4.3.0"
+]
+dynamic = ["version"]
+
+[project.optional-dependencies]
+dev = ["black == 23.10.0", "ruff == 0.1.0", "pre-commit >= 3.5.0"]
+tests = ["pytest >= 7.4.0"]
+
+[project.urls]
+Documentation = "https://github.com/argilla-io/argilla-llama-index"
+Issues = "https://github.com/argilla-io/argilla-llama-index/issues"
+Source = "https://github.com/argilla-io/argilla-llama-index"
+
+[tool.hatch.version]
+path = "src/argilla_llama_index/__init__.py"
+
+[tool.ruff]
+line-length = 88
+select = ["E", "W", "F", "I", "C", "B"]
+ignore = ["E501", "B905", "B008"]
+exclude = ["docs"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,4 +1,5 @@
 from argilla._constants import DEFAULT_API_KEY, DEFAULT_API_URL
+import argilla as rg
 from typing import Any, Dict, List, Optional
 from packaging.version import parse
 import warnings
@@ -174,7 +175,6 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
 
         # TODO: If we have a component more than once, properties currently don't account for those after the first one and get overwritten
     def _add_missing_metadata_properties(self, dataset, is_new_dataset_created) -> None:
-        import argilla as rg
         required_metadata_properties = ["total_time", "retrieve_time", "embedding_time", "synthesize_time", "templating_time", "llm_time"]
         existing_metadata_properties = [property.name for property in dataset.metadata_properties]
         missing_metadata_properties = [property for property in required_metadata_properties if property not in existing_metadata_properties]
