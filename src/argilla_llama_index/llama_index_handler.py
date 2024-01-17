@@ -19,6 +19,36 @@ from llama_index.callbacks.schema import (
 global_stack_trace = ContextVar("trace", default=[BASE_TRACE_EVENT])
 
 class ArgillaCallbackHandler(BaseCallbackHandler):
+    """Callback handler for Argilla.
+    
+    Args:
+        dataset_name: The name of the dataset to log the events to. If the dataset does not exist,
+            a new one will be created.
+        workspace_name: The name of the workspace to log the events to.
+        api_url: The URL of the Argilla server.
+        api_key: The API key to use to connect to Argilla.
+        event_starts_to_ignore: A list of event types to ignore when they start.
+        event_ends_to_ignore: A list of event types to ignore when they end.
+        handlers: A list of handlers to run when an event starts or ends.
+    
+    Raises:
+        ImportError: If the `argilla` Python package is not installed or the one installed is not compatible
+        ConnectionError: If the connection to Argilla fails
+        FileNotFoundError: If the retrieval and creation of the `FeedbackDataset` fails
+    
+    Example:
+        >>> from argilla_llama_index import ArgillaCallbackHandler
+        >>> from llama_index import VectorStoreIndex, ServiceContext, SimpleDirectoryReader
+        >>> from llama_index.llms import OpenAI
+        >>> from llama_index import set_global_handler
+        >>> set_global_handler("argilla", dataset_name="query_model")
+        >>> llm = OpenAI(model="gpt-3.5-turbo", temperature=0.8)
+        >>> service_context = ServiceContext.from_defaults(llm=llm)
+        >>> docs = SimpleDirectoryReader("data").load_data()
+        >>> index = VectorStoreIndex.from_documents(docs, service_context=service_context)
+        >>> query_engine = index.as_query_engine()
+        >>> response = query_engine.query("What did the author do growing up dude?")
+    """
 
     REPO_URL: str = "https://github.com/argilla-io/argilla"
     ISSUES_URL: str = f"{REPO_URL}/issues"
@@ -33,6 +63,24 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
         event_ends_to_ignore: Optional[List[CBEventType]] = None,
         handlers: Optional[List[BaseCallbackHandler]] = None,
     ) -> None:
+        """Initialize the Argilla callback handler.
+        
+        Args:
+            dataset_name: The name of the dataset to log the events to. If the dataset does not exist,
+                a new one will be created.
+            workspace_name: The name of the workspace to log the events to.
+            api_url: The URL of the Argilla server.
+            api_key: The API key to use to connect to Argilla.
+            event_starts_to_ignore: A list of event types to ignore when they start.
+            event_ends_to_ignore: A list of event types to ignore when they end.
+            handlers: A list of handlers to run when an event starts or ends.
+    
+        Raises:
+            ImportError: If the `argilla` Python package is not installed or the one installed is not compatible
+            ConnectionError: If the connection to Argilla fails
+            FileNotFoundError: If the retrieval and creation of the `FeedbackDataset` fails
+        
+        """
         
         self.event_starts_to_ignore = event_starts_to_ignore or []
         self.event_ends_to_ignore = event_ends_to_ignore or []
@@ -162,19 +210,17 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
             )
         
         self.events_data: Dict[str, List[CBEvent]] = defaultdict(list)
-        self._events_to_trace: List[CBEventType] = [
-            CBEventType.EMBEDDING, 
-            CBEventType.LLM, 
-            CBEventType.QUERY, 
-            CBEventType.RETRIEVE, 
-            CBEventType.SYNTHESIZE,
-            CBEventType.TEMPLATING]
         self.event_map_id_to_name = {}
         self.components_to_log = ["embedding", "retrieve", "llm", "synthesize", "templating"]
         self._ignore_components_in_tree = ["templating"]
 
         # TODO: If we have a component more than once, properties currently don't account for those after the first one and get overwritten
-    def _add_missing_metadata_properties(self, dataset, is_new_dataset_created) -> None:
+    def _add_missing_metadata_properties(
+        self, 
+        dataset: rg.FeedbackDataset, 
+        is_new_dataset_created: bool
+    ) -> None:
+        """Add missing metadata properties to the dataset."""
         required_metadata_properties = ["total_time", "retrieve_time", "embedding_time", "synthesize_time", "templating_time", "llm_time"]
         existing_metadata_properties = [property.name for property in dataset.metadata_properties]
         missing_metadata_properties = [property for property in required_metadata_properties if property not in existing_metadata_properties]
@@ -193,7 +239,14 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
                     ),
                 )
                 
-    def _check_components_for_tree(self, tree_structure_dict):
+    def _check_components_for_tree(
+        self,
+        tree_structure_dict: Dict[str, List[str]]
+    ) -> Dict[str, List[str]]:
+        """
+        Check whether the components in the tree are in the components to log.
+        Removes components that are not in the components to log so that they are not shown in the tree.  
+        """
         final_components_in_tree = self.components_to_log + ["query", "root"]
         for component in self._ignore_components_in_tree:
             if component in final_components_in_tree:
@@ -206,7 +259,15 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
                 tree_structure_dict[key] = [element for element in value if element.strip("0") in final_components_in_tree]
         return tree_structure_dict
                 
-    def _create_tree(self, tree_structure_dict, data_to_log):
+    def _create_tree(
+        self, 
+        tree_structure_dict: Dict[str, List[str]],
+        data_to_log: Dict[str, Any]
+    ) -> str:
+        """
+        Create a tree structure of the components used.
+        Relies on the Markdown syntax to create the tree structure.
+        """
         tree_structure_dict = self._check_components_for_tree(tree_structure_dict)
         root_node = list(tree_structure_dict.keys())[1]
         def print_tree_structure(node, tree_dict, indent=0, output="", root_node=root_node):
@@ -221,8 +282,15 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
 
         return tree_structure_str
             
-    def _get_events_map_with_names(self, events_data, trace_map):
-        """Get all event names."""
+    def _get_events_map_with_names(
+        self, 
+        events_data: Dict[str, List[CBEvent]],
+        trace_map: Dict[str, List[str]]
+    ) -> Dict[str, List[str]]:
+        """
+        Returns a dictionary where trace_map is mapped with the event names instead of the event ids.
+        Also returns a set of the event ids that were traced.
+        """
         event_ids_traced = set(trace_map.keys()) - {"root"}
         event_ids_traced.update(*trace_map.values())
         self.event_map_id_to_name = {}
@@ -236,7 +304,14 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
 
         return events_trace_map, event_ids_traced
     
-    def _extract_and_log_info(self, events_data, trace_map):
+    def _extract_and_log_info(
+        self, 
+        events_data: Dict[str, List[CBEvent]],
+        trace_map: Dict[str, List[str]]
+    ) -> None:
+        """
+        Main function that extracts the information from the events and logs it to Argilla.
+        """
         events_trace_map, event_ids_traced = self._get_events_map_with_names(events_data, trace_map)
         root_node = trace_map["root"]
         data_to_log = {}
@@ -298,7 +373,10 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
                 ]
             )
 
-    def start_trace(self, trace_id: Optional[str] = None) -> None:
+    def start_trace(
+        self, 
+        trace_id: Optional[str] = None
+    ) -> None:
         """Launch a trace."""
         self._trace_map = defaultdict(list)
         self._cur_trace_id = trace_id
@@ -310,6 +388,7 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
         trace_id: Optional[str] = None,
         trace_map: Optional[Dict[str, List[str]]] = None,
     ) -> None:
+        """End a trace."""
         self._trace_map = trace_map or defaultdict(list)
         self._end_time = datetime.now()
         self._extract_and_log_info(self.events_data, trace_map)
@@ -337,7 +416,10 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
         event = CBEvent(event_type, payload=payload, id_=event_id)
         self.events_data[event_id].append(event)
 
-def _get_time_diff(event_1_time_str: str, event_2_time_str: str) -> float:
+def _get_time_diff(
+    event_1_time_str: str, 
+    event_2_time_str: str
+) -> float:
     """Get the time difference between two events."""
     time_format = "%m/%d/%Y, %H:%M:%S.%f"
 
@@ -346,7 +428,11 @@ def _get_time_diff(event_1_time_str: str, event_2_time_str: str) -> float:
 
     return round((event_2_time - event_1_time).total_seconds(), 4)
 
-def _calc_time(events_data, id) -> float:
+def _calc_time(
+    events_data: Dict[str, List[CBEvent]], 
+    id: str
+) -> float:
+    """Calculate the time difference between the start and end of an event using the events_data."""
     start_time = events_data[id][0].time  # Event start
     end_time = events_data[id][1].time  # Event end
     return _get_time_diff(start_time, end_time)
