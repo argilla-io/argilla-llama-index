@@ -97,7 +97,7 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
                 "Python package installed. Please install it with `pip install argilla`"
             )
 
-        ## Check whether the Argilla version is compatible
+        # Check whether the Argilla version is compatible
         if parse(self.ARGILLA_VERSION) < parse("1.18.0"):
             raise ImportError(
                 f"The installed `argilla` version is {self.ARGILLA_VERSION} but "
@@ -152,7 +152,7 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
                     name=self.dataset_name,
                     workspace=self.workspace_name,
                 )
-                is_new_dataset_created = False
+                self.is_new_dataset_created = False
             # If the dataset does not exist, create a new one with the given name
             else:
                 dataset = rg.FeedbackDataset(
@@ -181,7 +181,7 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
                 )
 
                 self.dataset = dataset.push_to_argilla(self.dataset_name)
-                is_new_dataset_created = True
+                self.is_new_dataset_created = True
                 warnings.warn(
                 (
                     f"No dataset with the name {self.dataset_name} was found in workspace "
@@ -191,7 +191,6 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
                     "named `response-feedback`."
                 ),
             )
-            self._add_missing_metadata_properties(self.dataset, is_new_dataset_created)
 
         except Exception as e:
             raise FileNotFoundError(
@@ -211,26 +210,51 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
         
         self.events_data: Dict[str, List[CBEvent]] = defaultdict(list)
         self.event_map_id_to_name = {}
-        self.components_to_log = ["embedding", "retrieve", "llm", "synthesize", "templating"]
         self._ignore_components_in_tree = ["templating"]
+        self.components_to_log2 = set()
+        self.event_ids_traced = set()
 
+    def _create_root_and_other_nodes(
+        self, 
+        trace_map: Dict[str, List[str]]
+    ) -> None:
+        """Create the root node and the other nodes in the tree."""
+        self.root_node = self._get_event_name_by_id(trace_map["root"][0])
+        self.event_ids_traced = set(trace_map.keys()) - {"root"}
+        self.event_ids_traced.update(*trace_map.values())
+        for id in self.event_ids_traced:
+            self.components_to_log2.add(self._get_event_name_by_id(id))
+
+    def _get_event_name_by_id(
+        self, 
+        event_id: str
+    ) -> str:
+        """Get the name of the event by its id."""
+        return str(self.events_data[event_id][0].event_type).split(".")[1].lower()
+    
         # TODO: If we have a component more than once, properties currently don't account for those after the first one and get overwritten
     def _add_missing_metadata_properties(
         self, 
         dataset: rg.FeedbackDataset, 
-        is_new_dataset_created: bool
     ) -> None:
         """Add missing metadata properties to the dataset."""
-        required_metadata_properties = ["total_time", "retrieve_time", "embedding_time", "synthesize_time", "templating_time", "llm_time"]
+        required_metadata_properties = []
+        for property in self.components_to_log2:
+            metadata_name = f"{property}_time"
+            if property == self.root_node:
+                metadata_name = "total_time"
+            required_metadata_properties.append(metadata_name)
+
         existing_metadata_properties = [property.name for property in dataset.metadata_properties]
         missing_metadata_properties = [property for property in required_metadata_properties if property not in existing_metadata_properties]
+
         for property in missing_metadata_properties:
             title= " ".join([word.capitalize() for word in property.split('_')])
             if title == "Llm Time":
                 title = "LLM Time"
             dataset.add_metadata_property(
                 rg.FloatMetadataProperty(name=property, title=title))
-            if not is_new_dataset_created:
+            if not self.is_new_dataset_created:
                 warnings.warn(
                     (
                         f"The dataset given was missing some required metadata properties. "
@@ -247,7 +271,8 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
         Check whether the components in the tree are in the components to log.
         Removes components that are not in the components to log so that they are not shown in the tree.  
         """
-        final_components_in_tree = self.components_to_log + ["query", "root"]
+        final_components_in_tree = self.components_to_log2.copy()
+        final_components_in_tree.add("root")
         for component in self._ignore_components_in_tree:
             if component in final_components_in_tree:
                 final_components_in_tree.remove(component)
@@ -277,7 +302,7 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
                 for child in tree_dict[node]:
                     output = print_tree_structure(child, tree_dict, indent + 1, output)
             return output
-            
+        
         tree_structure_str = print_tree_structure(root_node, tree_structure_dict)
 
         return tree_structure_str
@@ -291,10 +316,8 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
         Returns a dictionary where trace_map is mapped with the event names instead of the event ids.
         Also returns a set of the event ids that were traced.
         """
-        event_ids_traced = set(trace_map.keys()) - {"root"}
-        event_ids_traced.update(*trace_map.values())
         self.event_map_id_to_name = {}
-        for event_id in event_ids_traced:
+        for event_id in self.event_ids_traced:
             event_name = str(events_data[event_id][0].event_type).split(".")[1].lower()
             while event_name in self.event_map_id_to_name.values():
                 event_name = event_name + "0" 
@@ -302,7 +325,7 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
 
         events_trace_map = {self.event_map_id_to_name.get(k, k): [self.event_map_id_to_name.get(v, v) for v in values] for k, values in trace_map.items()}
 
-        return events_trace_map, event_ids_traced
+        return events_trace_map
     
     def _extract_and_log_info(
         self, 
@@ -311,26 +334,47 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
     ) -> None:
         """
         Main function that extracts the information from the events and logs it to Argilla.
+        We currently log data if the root node is either "agent_step" or "query".
+        Otherwise, we do not log anything.
+        If we want to account for more root nodes, we just need to add them to the if statement.
         """
-        events_trace_map, event_ids_traced = self._get_events_map_with_names(events_data, trace_map)
+        events_trace_map = self._get_events_map_with_names(events_data, trace_map)
         root_node = trace_map["root"]
         data_to_log = {}
+        if len(root_node) == 1:
+            # Create logging data for the root node
+            if self.root_node == "agent_step":
+                # Event start
+                event = events_data[root_node[0]][0]
+                data_to_log["query"] = event.payload.get(EventPayload.MESSAGES)[0]
+                query_start_time = event.time
+                # Event end
+                event = events_data[root_node[0]][1]
+                data_to_log["response"] = event.payload.get(EventPayload.RESPONSE).response
+                query_end_time = event.time
+                data_to_log["agent_step_time"] = _get_time_diff(query_start_time, query_end_time)
 
-        if self.event_map_id_to_name[root_node[0]] == "query":
-            # Event start
-            event = events_data[root_node[0]][0]
-            data_to_log["query"] = event.payload.get(EventPayload.QUERY_STR)
-            query_start_time = event.time
-            # Event end
-            event = events_data[root_node[0]][1]
-            data_to_log["response"] = event.payload.get(EventPayload.RESPONSE).response
-            query_end_time = event.time
-            data_to_log["query_time"] = _get_time_diff(query_start_time, query_end_time)
-
-            event_ids_traced.remove(root_node[0])     # remove root id from event_ids_traced
+            elif self.root_node == "query":
+                # Event start
+                event = events_data[root_node[0]][0]
+                data_to_log["query"] = event.payload.get(EventPayload.QUERY_STR)
+                query_start_time = event.time
+                # Event end
+                event = events_data[root_node[0]][1]
+                data_to_log["response"] = event.payload.get(EventPayload.RESPONSE).response
+                query_end_time = event.time
+                data_to_log["query_time"] = _get_time_diff(query_start_time, query_end_time)
+            
+            else:
+                return
+            
+            # Create logging data for the rest of the components
+            self.event_ids_traced.remove(root_node[0])
 
             number_of_components_used = defaultdict(int)
-            for id in event_ids_traced:
+            components_to_log_without_root_node = self.components_to_log2.copy()
+            components_to_log_without_root_node.remove(self.root_node)
+            for id in self.event_ids_traced:
                 event_name = self.event_map_id_to_name[id]
                 if event_name.endswith("0"):
                     event_name_reduced = event_name.strip("0")
@@ -338,7 +382,7 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
                 else:
                     event_name_reduced = event_name
 
-                for component in self.components_to_log:
+                for component in components_to_log_without_root_node:
                     if event_name_reduced == component:
                         data_to_log[f"{event_name}_time"] = _calc_time(events_data, id)
 
@@ -349,15 +393,17 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
             metadata_to_log = {}
 
             for keys in data_to_log.keys():
-                if keys == "query_time":
+                if keys == "query_time" or keys == "agent_step_time":
                     metadata_to_log["total_time"] = data_to_log[keys]
                 elif keys.endswith("_time"):
                     metadata_to_log[keys] = data_to_log[keys]
-            
+                elif keys != "query" and keys != "response":
+                    metadata_to_log[keys] = data_to_log[keys]
+                        
             if len(number_of_components_used) > 0:
                 for key, value in number_of_components_used.items():
                     metadata_to_log[f"number_of_{key}_used"] = value + 1
-
+            
             tree_str = self._create_tree(events_trace_map, data_to_log)
             
             self.dataset.add_records(
@@ -382,6 +428,7 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
         self._cur_trace_id = trace_id
         self._start_time = datetime.now()
         self.events_data.clear()
+        self.components_to_log2.clear()
 
     def end_trace(
         self,
@@ -391,6 +438,8 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
         """End a trace."""
         self._trace_map = trace_map or defaultdict(list)
         self._end_time = datetime.now()
+        self._create_root_and_other_nodes(trace_map)
+        self._add_missing_metadata_properties(self.dataset)
         self._extract_and_log_info(self.events_data, trace_map)
 
     def on_event_start(
@@ -433,7 +482,7 @@ def _calc_time(
     id: str
 ) -> float:
     """Calculate the time difference between the start and end of an event using the events_data."""
-    start_time = events_data[id][0].time  # Event start
-    end_time = events_data[id][1].time  # Event end
+    start_time = events_data[id][0].time
+    end_time = events_data[id][1].time
     return _get_time_diff(start_time, end_time)
     
