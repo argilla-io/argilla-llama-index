@@ -284,29 +284,6 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
                 tree_structure_dict[key] = [element for element in value if element.strip("0") in final_components_in_tree]
         return tree_structure_dict
                 
-    def _create_tree(
-        self, 
-        tree_structure_dict: Dict[str, List[str]],
-        data_to_log: Dict[str, Any]
-    ) -> str:
-        """
-        Create a tree structure of the components used.
-        Relies on the Markdown syntax to create the tree structure.
-        """
-        tree_structure_dict = self._check_components_for_tree(tree_structure_dict)
-        root_node = list(tree_structure_dict.keys())[1]
-        def print_tree_structure(node, tree_dict, indent=0, output="", root_node=root_node):
-            node_time = str(data_to_log[f"{node}_time"])
-            output += "│   " * indent + "│--- " + node.upper().strip("0") + "--->" + f"<span style='color:green'>**{node_time}**</span>" + "\n"
-            if node in tree_dict:
-                for child in tree_dict[node]:
-                    output = print_tree_structure(child, tree_dict, indent + 1, output)
-            return output
-        
-        tree_structure_str = print_tree_structure(root_node, tree_structure_dict)
-
-        return tree_structure_str
-            
     def _get_events_map_with_names(
         self, 
         events_data: Dict[str, List[CBEvent]],
@@ -404,7 +381,8 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
                 for key, value in number_of_components_used.items():
                     metadata_to_log[f"number_of_{key}_used"] = value + 1
             
-            tree_str = self._create_tree(events_trace_map, data_to_log)
+            tree_structure = self._create_tree_structure(events_trace_map, data_to_log)
+            tree = self._create_svg(tree_structure)
             
             self.dataset.add_records(
             records=[
@@ -412,12 +390,56 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
                     "fields": {
                         "prompt": data_to_log["query"], 
                         "response": data_to_log["response"],
-                        "time-details": tree_str
+                        "time-details": tree
                         },
                         "metadata": metadata_to_log
                     },
                 ]
             )
+    
+    def _create_tree_structure(
+        self,
+        events_trace_map: Dict[str, List[str]],
+        data_to_log: Dict[str, Any]
+    ) -> List:
+        """Create the tree data to be converted to an SVG."""
+        tree_structure_dict = self._check_components_for_tree(events_trace_map)
+        data = []
+        data.append((0, 0, self.root_node.strip("0").upper(), data_to_log[f"{self.root_node}_time"]))
+        current_row = 1
+        for root_child in events_trace_map[self.root_node]:
+            data.append((current_row, 1, root_child.strip("0").upper(), data_to_log[f"{root_child}_time"]))
+            current_row += 1
+            for child in events_trace_map[root_child]:
+                data.append((current_row, 2, child.strip("0").upper(), data_to_log[f"{child}_time"]))
+                current_row += 1
+        return data
+        
+    def _create_svg(
+        self, 
+        data: List
+    ) -> str:
+        row_constant = 65
+        indent_constant = 40
+        body = ""
+        for each in data:
+            row, indent, node_name, node_time = each
+            body_raw = f"""
+<g transform="translate({indent*indent_constant}, {row*row_constant})">
+<rect x=".5" y=".5" width="355" height="57" rx="8.49" ry="8.49" style="fill: #24272e; stroke: #e4f3f2stroke-miterlimit: 10;"/>
+<text transform="translate(15.55 34.97)" style="fill: #fff; font-family: GillSans, &apos;Gill Sans&apos;font-size: 20px;"><tspan x="0" y="0">{node_name}</tspan></text>
+<text transform="translate(300 34.06)" style="fill: #b7d989; font-family: GillSans-Italic, &apos;Gill Sanapos;; font-size: 16px; font-style: italic;"><tspan x="0" y="0">{node_time}</tspan></text>
+</g>
+            """
+            body += body_raw
+            base = base =f"""
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Layer_1" data-name="Layer 1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 750 {len(data)*row_constant}">
+{body}
+</svg>
+            """
+            base = base.strip()
+        return base
 
     def start_trace(
         self, 
