@@ -419,16 +419,26 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
         self, 
         data: List
     ) -> str:
-        row_constant = 65
+        # changing only the box height changes all other values as well
+        # others can be adjusted individually if needed
+        box_height = 47
+        box_width = box_height * 8.65
+        row_constant = box_height + 7
         indent_constant = 40
+        font_size_node_name = box_height * 0.4188
+        font_size_time = font_size_node_name - 4
+        text_centering = box_height * 0.6341
+        node_name_indent = box_height * 0.35
+        time_indent = box_height * 7.15
+        
         body = ""
         for each in data:
             row, indent, node_name, node_time = each
             body_raw = f"""
 <g transform="translate({indent*indent_constant}, {row*row_constant})">
-<rect x=".5" y=".5" width="355" height="57" rx="8.49" ry="8.49" style="fill: #24272e; stroke: #e4f3f2stroke-miterlimit: 10;"/>
-<text transform="translate(15.55 34.97)" style="fill: #fff; font-family: GillSans, &apos;Gill Sans&apos;font-size: 20px;"><tspan x="0" y="0">{node_name}</tspan></text>
-<text transform="translate(300 34.06)" style="fill: #b7d989; font-family: GillSans-Italic, &apos;Gill Sanapos;; font-size: 16px; font-style: italic;"><tspan x="0" y="0">{node_time}</tspan></text>
+<rect x=".5" y=".5" width="{box_width}" height="{box_height}" rx="8.49" ry="8.49" style="fill: #24272e; stroke: #e4f3f2stroke-miterlimit: 10;"/>
+<text transform="translate({node_name_indent} {text_centering})" style="fill: #fff; font-size: {font_size_node_name}px;"><tspan x="0" y="0">{node_name}</tspan></text>
+<text transform="translate({time_indent} {text_centering})" style="fill: #b7d989; font-size: {font_size_time}px; font-style: italic;"><tspan x="0" y="0">{node_time}</tspan></text>
 </g>
             """
             body += body_raw
