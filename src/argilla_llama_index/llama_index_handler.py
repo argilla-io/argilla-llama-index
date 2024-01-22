@@ -211,7 +211,7 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
         self.events_data: Dict[str, List[CBEvent]] = defaultdict(list)
         self.event_map_id_to_name = {}
         self._ignore_components_in_tree = ["templating"]
-        self.components_to_log2 = set()
+        self.components_to_log = set()
         self.event_ids_traced = set()
 
     def _create_root_and_other_nodes(
@@ -223,7 +223,7 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
         self.event_ids_traced = set(trace_map.keys()) - {"root"}
         self.event_ids_traced.update(*trace_map.values())
         for id in self.event_ids_traced:
-            self.components_to_log2.add(self._get_event_name_by_id(id))
+            self.components_to_log.add(self._get_event_name_by_id(id))
 
     def _get_event_name_by_id(
         self, 
@@ -239,7 +239,7 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
     ) -> None:
         """Add missing metadata properties to the dataset."""
         required_metadata_properties = []
-        for property in self.components_to_log2:
+        for property in self.components_to_log:
             metadata_name = f"{property}_time"
             if property == self.root_node:
                 metadata_name = "total_time"
@@ -271,7 +271,7 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
         Check whether the components in the tree are in the components to log.
         Removes components that are not in the components to log so that they are not shown in the tree.  
         """
-        final_components_in_tree = self.components_to_log2.copy()
+        final_components_in_tree = self.components_to_log.copy()
         final_components_in_tree.add("root")
         for component in self._ignore_components_in_tree:
             if component in final_components_in_tree:
@@ -349,7 +349,7 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
             self.event_ids_traced.remove(root_node[0])
 
             number_of_components_used = defaultdict(int)
-            components_to_log_without_root_node = self.components_to_log2.copy()
+            components_to_log_without_root_node = self.components_to_log.copy()
             components_to_log_without_root_node.remove(self.root_node)
             for id in self.event_ids_traced:
                 event_name = self.event_map_id_to_name[id]
@@ -403,7 +403,7 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
         data_to_log: Dict[str, Any]
     ) -> List:
         """Create the tree data to be converted to an SVG."""
-        tree_structure_dict = self._check_components_for_tree(events_trace_map)
+        events_trace_map = self._check_components_for_tree(events_trace_map)
         data = []
         data.append((0, 0, self.root_node.strip("0").upper(), data_to_log[f"{self.root_node}_time"]))
         current_row = 1
@@ -450,7 +450,7 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
         self._cur_trace_id = trace_id
         self._start_time = datetime.now()
         self.events_data.clear()
-        self.components_to_log2.clear()
+        self.components_to_log.clear()
 
     def end_trace(
         self,
