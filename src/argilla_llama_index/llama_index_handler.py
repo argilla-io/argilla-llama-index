@@ -24,6 +24,7 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
     Args:
         dataset_name: The name of the dataset to log the events to. If the dataset does not exist,
             a new one will be created.
+        number_of_retrievals: The number of retrieved documents to log.
         workspace_name: The name of the workspace to log the events to.
         api_url: The URL of the Argilla server.
         api_key: The API key to use to connect to Argilla.
@@ -69,6 +70,7 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
         Args:
             dataset_name: The name of the dataset to log the events to. If the dataset does not exist,
                 a new one will be created.
+            number_of_retrievals: The number of retrieved documents to log.
             workspace_name: The name of the workspace to log the events to.
             api_url: The URL of the Argilla server.
             api_key: The API key to use to connect to Argilla.
@@ -161,8 +163,10 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
                     required_context_questions = self._add_context_questions(number_of_retrievals)
                     existing_fields = [field.to_local() for field in self.dataset.fields]
                     existing_questions = [question.to_local() for question in self.dataset.questions]
+                    # If the required fields and questions do not match with the existing ones, update the dataset and upload it again with "-updated" added to the name
                     if all(element in existing_fields for element in required_context_fields) == False or all(element in existing_questions for element in required_context_questions) == False:
                         local_dataset = self.dataset.pull()
+
                         fields_to_pop = []
                         for index, field in enumerate(local_dataset.fields):
                             if field.name.startswith("retrieved_document_"):
@@ -182,20 +186,19 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
                                 local_dataset.questions.pop(index)
 
                         for field in required_context_fields:
-                            local_dataset.fields.insert(-1, field)
+                            local_dataset.fields.append(field)
                         for question in required_context_questions:
                             local_dataset.questions.append(question)
                         self.dataset = local_dataset.push_to_argilla(self.dataset_name+"-updated")
 
             # If the dataset does not exist, create a new one with the given name
             else:
-                required_context_fields = self._add_context_fields(number_of_retrievals)
                 dataset = rg.FeedbackDataset(
                     fields=[
                         rg.TextField(name="prompt", required=True),
-                        rg.TextField(name="response", required=False)] 
-                    + required_context_fields
-                    + [rg.TextField(name="time-details", title="Time Details", use_markdown=True)],
+                        rg.TextField(name="response", required=False),
+                        rg.TextField(name="time-details", title="Time Details", use_markdown=True)
+                    ] + self._add_context_fields(number_of_retrievals),
                     questions=[
                         rg.RatingQuestion(
                             name="response-rating",
@@ -234,7 +237,7 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
             ) from e
         
         supported_context_fields = [f"retrieved_document_{i+1}" for i in range(number_of_retrievals)]
-        supported_fields = ["prompt", "response"] + supported_context_fields + ["time-details"]
+        supported_fields = ["prompt", "response", "time-details"] + supported_context_fields
         if supported_fields != [field.name for field in self.dataset.fields]:
             raise ValueError(
                 f"`FeedbackDataset` with name={self.dataset_name} in the workspace="
@@ -251,8 +254,9 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
 
     def _add_context_fields(
         self,
-        number_of_retrievals
+        number_of_retrievals: int
     ) -> List:
+        """Create the context fields to be added to the dataset."""
         context_fields = [
             rg.TextField(
                 name="retrieved_document_" + str(doc + 1),
@@ -266,8 +270,9 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
     
     def _add_context_questions(
         self,
-        number_of_retrievals
+        number_of_retrievals: int
     ) -> List:
+        """Create the context questions to be added to the dataset."""
         rating_questions = [
             rg.RatingQuestion(
                 name="rating_retrieved_document_" + str(doc + 1),
@@ -468,7 +473,8 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
 
             fields = {
                 "prompt": data_to_log["query"], 
-                "response": data_to_log["response"]
+                "response": data_to_log["response"],
+                "time-details": tree
             }
 
             if self.number_of_retrievals > 0:
@@ -476,8 +482,6 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
                     if key.endswith("_text"):
                         fields[f"retrieved_document_{key[-6]}"] = f"DOCUMENT SCORE: {retrieval_metadata[key[:-5]+'_score']}\n\n" + value
                         del metadata_to_log[key]
-
-            fields.update({"time-details": tree})
 
             self.dataset.add_records(
                 records=[
