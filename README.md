@@ -14,7 +14,7 @@ With Argilla's Python SDK and adaptable UI, you can create human and model-in-th
 You first need to install argilla and argilla-llama-index as follows:
 
 ```bash
-pip install argilla argilla-llama-index
+pip install argilla-llama-index
 ```
 
 You will need to an Argilla Server running to monitor the LLM. You can either install the server locally or have it on HuggingFace Spaces. For a complete guide on how to install and initialize the server, you can refer to the [Quickstart Guide](https://docs.argilla.io/en/latest/getting_started/quickstart_installation.html). 
