@@ -56,6 +56,7 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
     def __init__(
         self,
         dataset_name: str,
+        number_of_retrievals: int = 0,
         workspace_name: Optional[str] = None,
         api_url: Optional[str] = None,
         api_key: Optional[str] = None,
@@ -85,6 +86,7 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
         self.event_starts_to_ignore = event_starts_to_ignore or []
         self.event_ends_to_ignore = event_ends_to_ignore or []
         self.handlers = handlers or []
+        self.number_of_retrievals = number_of_retrievals
 
         # Import Argilla 
         try:
@@ -153,33 +155,65 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
                     workspace=self.workspace_name,
                 )
                 self.is_new_dataset_created = False
+
+                if number_of_retrievals > 0:
+                    required_context_fields = self._add_context_fields(number_of_retrievals)
+                    required_context_questions = self._add_context_questions(number_of_retrievals)
+                    existing_fields = [field.to_local() for field in self.dataset.fields]
+                    existing_questions = [question.to_local() for question in self.dataset.questions]
+                    if all(element in existing_fields for element in required_context_fields) == False or all(element in existing_questions for element in required_context_questions) == False:
+                        local_dataset = self.dataset.pull()
+                        fields_to_pop = []
+                        for index, field in enumerate(local_dataset.fields):
+                            if field.name.startswith("retrieved_document_"):
+                                fields_to_pop.append(index)
+                                fields_to_pop.sort(reverse=True)
+                        else:
+                            for index in fields_to_pop:
+                                local_dataset.fields.pop(index)
+                        
+                        questions_to_pop = []
+                        for index, question in enumerate(local_dataset.questions):
+                            if question.name.startswith("rating_retrieved_document_"):
+                                questions_to_pop.append(index)
+                                questions_to_pop.sort(reverse=True)
+                        else:
+                            for index in questions_to_pop:
+                                local_dataset.questions.pop(index)
+
+                        for field in required_context_fields:
+                            local_dataset.fields.insert(-1, field)
+                        for question in required_context_questions:
+                            local_dataset.questions.append(question)
+                        self.dataset = local_dataset.push_to_argilla(self.dataset_name+"-updated")
+
             # If the dataset does not exist, create a new one with the given name
             else:
+                required_context_fields = self._add_context_fields(number_of_retrievals)
                 dataset = rg.FeedbackDataset(
                     fields=[
                         rg.TextField(name="prompt", required=True),
-                        rg.TextField(name="response", required=False),
-                        rg.TextField(name="time-details", title="Time Details", use_markdown=True),
-                    ],
+                        rg.TextField(name="response", required=False)] 
+                    + required_context_fields
+                    + [rg.TextField(name="time-details", title="Time Details", use_markdown=True)],
                     questions=[
                         rg.RatingQuestion(
                             name="response-rating",
-                            title="Rating",
+                            title="Rating for the response",
                             description="How would you rate the quality of the response?",
-                            values=[1, 2, 3, 4, 5],
+                            values=[1, 2, 3, 4, 5, 6, 7],
                             required=True,
                         ),
                         rg.TextQuestion(
                             name="response-feedback",
-                            title="Feedback",
+                            title="Feedback for the response",
                             description="What feedback do you have for the response?",
                             required=False,
                         ),
-                    ],
+                    ] + self._add_context_questions(number_of_retrievals),
                         guidelines="You're asked to rate the quality of the response and provide feedback.",
                         allow_extra_metadata=True,
                 )
-
                 self.dataset = dataset.push_to_argilla(self.dataset_name)
                 self.is_new_dataset_created = True
                 warnings.warn(
@@ -187,8 +221,8 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
                     f"No dataset with the name {self.dataset_name} was found in workspace "
                     f"{self.workspace_name}. A new dataset with the name {self.dataset_name} "
                     "has been created with the question fields `prompt` and `response`"
-                    "and the rating question `response-rating` with values 1-5 and text question"
-                    "named `response-feedback`."
+                    "and the rating question `response-rating` with values 1-7 and text question"
+                    " named `response-feedback`."
                 ),
             )
 
@@ -199,7 +233,8 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
                 f"as an `integration` issue."
             ) from e
         
-        supported_fields = ["prompt", "response", "time-details"]
+        supported_context_fields = [f"retrieved_document_{i+1}" for i in range(number_of_retrievals)]
+        supported_fields = ["prompt", "response"] + supported_context_fields + ["time-details"]
         if supported_fields != [field.name for field in self.dataset.fields]:
             raise ValueError(
                 f"`FeedbackDataset` with name={self.dataset_name} in the workspace="
@@ -213,6 +248,38 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
         self._ignore_components_in_tree = ["templating"]
         self.components_to_log = set()
         self.event_ids_traced = set()
+
+    def _add_context_fields(
+        self,
+        number_of_retrievals
+    ) -> List:
+        context_fields = [
+            rg.TextField(
+                name="retrieved_document_" + str(doc + 1),
+                title="Retrieved Document " + str(doc + 1),
+                use_markdown=True,
+                required=False,
+            )
+            for doc in range(number_of_retrievals)
+        ]
+        return context_fields
+    
+    def _add_context_questions(
+        self,
+        number_of_retrievals
+    ) -> List:
+        rating_questions = [
+            rg.RatingQuestion(
+                name="rating_retrieved_document_" + str(doc + 1),
+                title="Rate the relevance of the Retrieved Document " + str(doc + 1) + " (if present)",
+                values=list(range(1, 8)),
+                # After https://github.com/argilla-io/argilla/issues/4523 is fixed, we can use the description
+                description=None, #"Rate the relevance of the retrieved document."
+                required=False,
+            )
+            for doc in range(number_of_retrievals)
+        ]
+        return rating_questions
 
     def _create_root_and_other_nodes(
         self, 
@@ -254,7 +321,7 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
                 title = "LLM Time"
             dataset.add_metadata_property(
                 rg.FloatMetadataProperty(name=property, title=title))
-            if not self.is_new_dataset_created:
+            if self.is_new_dataset_created == False:
                 warnings.warn(
                     (
                         f"The dataset given was missing some required metadata properties. "
@@ -299,7 +366,6 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
             while event_name in self.event_map_id_to_name.values():
                 event_name = event_name + "0" 
             self.event_map_id_to_name[event_id] = event_name
-
         events_trace_map = {self.event_map_id_to_name.get(k, k): [self.event_map_id_to_name.get(v, v) for v in values] for k, values in trace_map.items()}
 
         return events_trace_map
@@ -351,6 +417,7 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
             number_of_components_used = defaultdict(int)
             components_to_log_without_root_node = self.components_to_log.copy()
             components_to_log_without_root_node.remove(self.root_node)
+            retrieval_metadata = {}
             for id in self.event_ids_traced:
                 event_name = self.event_map_id_to_name[id]
                 if event_name.endswith("0"):
@@ -366,7 +433,20 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
                 if event_name_reduced == "llm":
                     data_to_log[f"{event_name}_system_prompt"] = events_data[id][0].payload.get(EventPayload.MESSAGES)[0].content
                     data_to_log[f"{event_name}_model_name"] = events_data[id][0].payload.get(EventPayload.SERIALIZED)["model"]
-                        
+
+                retrieved_document_counter = 1
+                if event_name_reduced == "retrieve":
+                    for retrieval_node in events_data[id][1].payload.get(EventPayload.NODES):
+                        retrieve_dict = retrieval_node.to_dict()
+                        retrieval_metadata[f"{event_name}_document_{retrieved_document_counter}_score"] = retrieval_node.score
+                        retrieval_metadata[f"{event_name}_document_{retrieved_document_counter}_filename"] = retrieve_dict["node"]["metadata"]["file_name"]
+                        retrieval_metadata[f"{event_name}_document_{retrieved_document_counter}_text"] = retrieve_dict["node"]["text"]
+                        retrieval_metadata[f"{event_name}_document_{retrieved_document_counter}_start_character"] = retrieve_dict["node"]["start_char_idx"]
+                        retrieval_metadata[f"{event_name}_document_{retrieved_document_counter}_end_character"] = retrieve_dict["node"]["end_char_idx"]
+                        retrieved_document_counter += 1
+                        if retrieved_document_counter > self.number_of_retrievals:
+                            break
+
             metadata_to_log = {}
 
             for keys in data_to_log.keys():
@@ -381,17 +461,28 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
                 for key, value in number_of_components_used.items():
                     metadata_to_log[f"number_of_{key}_used"] = value + 1
             
+            metadata_to_log.update(retrieval_metadata)
+            
             tree_structure = self._create_tree_structure(events_trace_map, data_to_log)
             tree = self._create_svg(tree_structure)
-            
+
+            fields = {
+                "prompt": data_to_log["query"], 
+                "response": data_to_log["response"]
+            }
+
+            if self.number_of_retrievals > 0:
+                for key, value in list(retrieval_metadata.items()):
+                    if key.endswith("_text"):
+                        fields[f"retrieved_document_{key[-6]}"] = f"DOCUMENT SCORE: {retrieval_metadata[key[:-5]+'_score']}\n\n" + value
+                        del metadata_to_log[key]
+
+            fields.update({"time-details": tree})
+
             self.dataset.add_records(
-            records=[
-                {
-                    "fields": {
-                        "prompt": data_to_log["query"], 
-                        "response": data_to_log["response"],
-                        "time-details": tree
-                        },
+                records=[
+                    {
+                        "fields": fields,
                         "metadata": metadata_to_log
                     },
                 ]
@@ -436,7 +527,7 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
             row, indent, node_name, node_time = each
             body_raw = f"""
 <g transform="translate({indent*indent_constant}, {row*row_constant})">
-<rect x=".5" y=".5" width="{box_width}" height="{box_height}" rx="8.49" ry="8.49" style="fill: #24272e; stroke: #e4f3f2stroke-miterlimit: 10;"/>
+<rect x=".5" y=".5" width="{box_width}" height="{box_height}" rx="8.49" ry="8.49" style="fill: #24272e; stroke: #afdfe5; stroke-miterlimit: 10;"/>
 <text transform="translate({node_name_indent} {text_centering})" style="fill: #fff; font-size: {font_size_node_name}px;"><tspan x="0" y="0">{node_name}</tspan></text>
 <text transform="translate({time_indent} {text_centering})" style="fill: #b7d989; font-size: {font_size_time}px; font-style: italic;"><tspan x="0" y="0">{node_time}</tspan></text>
 </g>
