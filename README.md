@@ -1,5 +1,5 @@
 <div align="center">
-  <h1>✨🦙 Argilla's LlamaIndex integration</h1>
+  <h1>✨🦙 Argilla's LlamaIndex Integration</h1>
   <p><em> Argilla integration into the LlamaIndex workflow</em></p>
 </div>
 
