@@ -46,6 +46,10 @@ from llama_index import set_global_handler
 
 What we need to do is to set Argilla as the global handler as below. Within the handler, we need to provide the dataset name that we will use. If the dataset does not exist, it will be created with the given name. You can also set the API KEY, API URL, and the Workspace name. You can learn more about the variables that controls Argilla initialization [here](https://docs.argilla.io/en/latest/getting_started/installation/configurations/workspace_management.html)
 
+> [!TIP]
+> Remember that the default Argilla workspace name is `admin`. If you want to use a custom Workspace, you'll need to create it and grant access to the desired users. The link above also explains how to do that.
+
+
 ```python
 set_global_handler("argilla", dataset_name="query_model")
 ```
