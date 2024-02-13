@@ -17,7 +17,7 @@ You first need to install argilla and argilla-llama-index as follows:
 pip install argilla-llama-index
 ```
 
-You will need to an Argilla Server running to monitor the LLM. You can either install the server locally or have it on HuggingFace Spaces. For a complete guide on how to install and initialize the server, you can refer to the [Quickstart Guide](https://docs.argilla.io/en/latest/getting_started/quickstart_installation.html). 
+You will need to an Argilla Server running to monitor the LLM. You can either install the server locally or have it on HuggingFace Spaces. For a complete guide on how to install and initialize the server, you can refer to the [Quickstart Guide](https://docs.argilla.io/en/latest/getting_started/quickstart_installation.html).
 
 ## Usage
 
@@ -56,7 +56,6 @@ llm = OpenAI(model="gpt-3.5-turbo", temperature=0.8)
 
 With the code snippet below, you can create a basic workflow with Llama Index. You will also need a txt file as the data source within a folder named "data". For a sample data file and more info regarding the use of Llama Index, you can refer to the [Llama Index documentation](https://docs.llamaindex.ai/en/stable/getting_started/starter_example.html).
 
-
 ```python
 service_context = ServiceContext.from_defaults(llm=llm)
 docs = SimpleDirectoryReader("data").load_data()
@@ -64,10 +63,11 @@ index = VectorStoreIndex.from_documents(docs, service_context=service_context)
 query_engine = index.as_query_engine()
 ```
 
-Now, let us run the `query_engine` to have a response from the model. 
+Now, let us run the `query_engine` to have a response from the model.
 
 ```python
 response = query_engine.query("What did the author do growing up?")
+response
 ```
 
 ```bash
@@ -81,7 +81,3 @@ The prompt given and the response obtained will be logged in to Argilla server. 
 And we also logged the metadata properties into Argilla. You can check them via the Filters on the upper left and filter your data according to any of them.
 
 ![Argilla Dataset](docs/argilla-ui-dataset-2.png)
-
-
-
-
