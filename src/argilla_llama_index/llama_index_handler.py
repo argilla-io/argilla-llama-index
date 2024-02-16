@@ -8,8 +8,8 @@ from datetime import datetime
 from collections import defaultdict
 from contextvars import ContextVar
 
-from llama_index.callbacks.base_handler import BaseCallbackHandler
-from llama_index.callbacks.schema import (
+from llama_index.core.callbacks.base_handler import BaseCallbackHandler
+from llama_index.core.callbacks.schema import (
     BASE_TRACE_EVENT,
     CBEventType,
     EventPayload,
