@@ -6,6 +6,8 @@ __pycache__/
 # C extensions
 *.so
 
+docs.argilla.io/
+
 # Distribution / packaging
 .Python
 build/
