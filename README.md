@@ -39,9 +39,9 @@ openai_api_key = os.getenv("OPENAI_API_KEY", None) or getpass("Enter OpenAI API 
 Let's now write all the necessary imports
 
 ```python
-from llama_index import VectorStoreIndex, ServiceContext, SimpleDirectoryReader
-from llama_index.llms import OpenAI
-from llama_index import set_global_handler
+from argilla_llama_index import ArgillaCallbackHandler
+from llama_index.core import VectorStoreIndex, ServiceContext, SimpleDirectoryReader, set_global_handler
+from llama_index.llms.openai import OpenAI
 ```
 
 What we need to do is to set Argilla as the global handler as below. Within the handler, we need to provide the dataset name that we will use. If the dataset does not exist, it will be created with the given name. You can also set the API KEY, API URL, and the Workspace name. You can learn more about the variables that controls Argilla initialization [here](https://docs.argilla.io/en/latest/getting_started/installation/configurations/workspace_management.html)
