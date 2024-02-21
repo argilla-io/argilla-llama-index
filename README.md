@@ -57,7 +57,7 @@ set_global_handler("argilla", dataset_name="query_model")
 Let's now create the llm instance, using GPT-3.5 from OpenAI.
 
 ```python
-llm = OpenAI(model="gpt-3.5-turbo", temperature=0.8)
+llm = OpenAI(model="gpt-3.5-turbo", temperature=0.8, openai_api_key=openai_api_key)
 ```
 
 With the code snippet below, you can create a basic workflow with LlamaIndex. You will also need a txt file as the data source within a folder named "data". For a sample data file and more info regarding the use of Llama Index, you can refer to the [Llama Index documentation](https://docs.llamaindex.ai/en/stable/getting_started/starter_example.html).
