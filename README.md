@@ -39,7 +39,6 @@ openai_api_key = os.getenv("OPENAI_API_KEY", None) or getpass("Enter OpenAI API 
 Let's now write all the necessary imports
 
 ```python
-from argilla_llama_index import ArgillaCallbackHandler
 from llama_index.core import VectorStoreIndex, ServiceContext, SimpleDirectoryReader, set_global_handler
 from llama_index.llms.openai import OpenAI
 ```
