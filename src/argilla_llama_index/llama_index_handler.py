@@ -1,4 +1,5 @@
 from collections import defaultdict
+from datetime import datetime
 import os
 from packaging.version import parse
 from typing import Any, Dict, List, Optional
@@ -44,6 +45,7 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
         # Import Argilla
         try:
             import argilla as rg
+
             self.ARGILLA_VERSION = rg.__version__
 
         except ImportError:
@@ -222,3 +224,134 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
         self._ignore_components_in_tree = ["templating"]
         self.components_to_log = set()
         self.event_ids_traced = set()
+
+        
+
+    # The four methods required by the abstrac class BaseCallbackHandler.
+    # These methods are the one being executed on the different events, by the llama-index
+    # BaseCallbackHandler class.
+
+    def start_trace(self, trace_id: Optional[str] = None) -> None:
+        """
+        Start tracing events.
+
+        Args:
+            trace_id (str, optional): The trace_id to start tracing.
+        """
+
+        self._trace_map = defaultdict(list)
+        self._cur_trace_id = trace_id
+        self._start_time = datetime.now()
+
+        # Clear the events and the components prior to running the query.
+        # They are usually events related to creating the docs and indexing.
+        self.events_data.clear()
+        self.components_to_log.clear()
+
+    def end_trace(
+        self,
+        trace_id: Optional[str] = None,
+        trace_map: Optional[Dict[str, List[str]]] = None,
+    ) -> None:
+        """
+        End tracing events.
+
+        Args:
+            trace_id (str, optional): The trace_id to end tracing.
+            trace_map (Dict[str, List[str]], optional): The trace_map to end. This map has been obtained from the parent class.
+        """
+
+        self._trace_map = trace_map or defaultdict(list)
+        self._end_time = datetime.now()
+        print("Events data on end_trace()")
+        for key, value in self.events_data.items():
+            print(key, value)
+        print("Trace map on end_trace()")
+        print(self._trace_map)
+        print()
+
+        # The trace_map is a dictionary with the event_id as the key and the list of components as the value. However,
+        # it only register those events which payload is of type EventPayload.QUERY_STR. We must manually introduce
+        # the events that are not of this type, but are relevant to the prediction process.
+        # for node_id in self._trace_map:
+        #     for event_id, event_id_object in self.events_data.items():
+
+    def on_event_start(
+        self,
+        event_type: CBEventType,
+        payload: Optional[Dict[str, Any]] = None,
+        event_id: Optional[str] = None,
+        parent_id: str = None,
+    ) -> str:
+        """
+        Store event start data by event type.
+
+        Args:
+            event_type (CBEventType): The event type to store.
+            payload (Dict[str, Any], optional): The payload to store.
+            event_id (str, optional): The event id to store.
+            parent_id (str, optional): The parent id to store.
+
+        Returns:
+            str: The event id.
+        """
+
+        event = CBEvent(event_type, payload=payload, id_=event_id)
+        self.events_data[event_id].append(event)
+
+        return event.id_
+
+    def on_event_end(
+        self,
+        event_type: CBEventType,
+        payload: Optional[Dict[str, Any]] = None,
+        event_id: str = None,
+    ) -> None:
+        """
+        Store event end data by event type.
+
+        Args:
+            event_type (CBEventType): The event type to store.
+            payload (Dict[str, Any], optional): The payload to store.
+            event_id (str, optional): The event id to store.
+        """
+
+        event = CBEvent(event_type, payload=payload, id_=event_id)
+        self.events_data[event_id].append(event)
+        self._trace_map = defaultdict(list)
+
+    # Auxiliary methods
+
+    def _get_time_diff(event_1_time_str: str, event_2_time_str: str) -> float:
+        """
+        Get the time difference between two events Follows the American format (month, day, year).
+
+        Args:
+            event_1_time_str (str): The first event time.
+            event_2_time_str (str): The second event time.
+
+        Returns:
+            float: The time difference between the two events.
+        """
+        time_format = "%m/%d/%Y, %H:%M:%S.%f"
+
+        event_1_time = datetime.strptime(event_1_time_str, time_format)
+        event_2_time = datetime.strptime(event_2_time_str, time_format)
+
+        return round((event_2_time - event_1_time).total_seconds(), 4)
+
+    def _calc_time(events_data: Dict[str, List[CBEvent]], id: str) -> float:
+        """
+        Calculate the time difference between the start and end of an event using the events_data.
+
+        Args:
+            events_data (Dict[str, List[CBEvent]]): The events data, stored in a dictionary.
+            id (str): The event id to calculate the time difference between start and finish timestamps.
+
+        Returns:
+            float: The time difference between the start and end of the event.
+        """
+
+        start_time = events_data[id][0].time
+        end_time = events_data[id][1].time
+        return _get_time_diff(start_time, end_time)
