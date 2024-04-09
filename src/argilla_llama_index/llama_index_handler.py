@@ -91,7 +91,7 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
                 f"Could not connect to Argilla with exception: '{e}'.\n"
                 "Please check your `api_key` and `api_url`, and make sure that "
                 "the Argilla server is up and running. If the problem persists "
-                f"please report it to {self.ISSUES_URL} as an `integration` issue."
+                f"please report it to https://github.com/argilla-io/argilla/issues/ as an `integration` issue."
             ) from e
 
         # Set the Argilla variables
@@ -272,7 +272,6 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
         """Create the root node and the other nodes in the tree."""
         self.root_node = self._get_event_name_by_id(trace_map["root"][0])
         self.event_ids_traced = set(trace_map.keys()) - {"root"}
-        print(trace_map)
         self.event_ids_traced.update(*trace_map.values())
         for id in self.event_ids_traced:
             self.components_to_log.add(self._get_event_name_by_id(id))
@@ -364,9 +363,6 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
             for k, values in trace_map.items()
         }
 
-        print("Events trace map with names:")
-        print(events_trace_map)
-
         return events_trace_map
 
     def _extract_and_log_info(
@@ -378,10 +374,6 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
         Otherwise, we do not log anything.
         If we want to account for more root nodes, we just need to add them to the if statement.
         """
-        print(f"Events data:")
-        for key, value in events_data.items():
-            print(f"{key}: {value}")
-        print(f"Trace map {trace_map}")
         events_trace_map = self._get_events_map_with_names(events_data, trace_map)
         root_node = trace_map["root"]
         data_to_log = {}
