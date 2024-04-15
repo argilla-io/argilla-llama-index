@@ -44,7 +44,6 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
         self.handlers = handlers or []
         self.number_of_retrievals = number_of_retrievals
 
-        # Import Argilla
         try:
             import argilla as rg
 
