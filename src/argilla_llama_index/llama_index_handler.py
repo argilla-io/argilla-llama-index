@@ -167,17 +167,15 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
                             question.to_local() for question in self.dataset.questions
                         ]
                         # If the required fields and questions do not match with the existing ones, update the dataset and upload it again with "-updated" added to the name
-                        if (
+                        if not (
                             all(
                                 element in existing_fields
                                 for element in required_context_fields
                             )
-                            == False
-                            or all(
+                            and all(
                                 element in existing_questions
                                 for element in required_context_questions
                             )
-                            == False
                         ):
                             local_dataset = self.dataset.pull()
 
