@@ -123,16 +123,8 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
             )
             api_key = DEFAULT_API_KEY
 
-        # Initialize the Argilla client
-        try:
-            rg.init(api_key=api_key, api_url=api_url)
-        except Exception as e:
-            raise ConnectionError(
-                f"Could not connect to Argilla with exception: '{e}'.\n"
-                "Please check your `api_key` and `api_url`, and make sure that "
-                "the Argilla server is up and running. If the problem persists "
-                f"please report it to https://github.com/argilla-io/argilla/issues/ as an `integration` issue."
-            ) from e
+        
+        rg.init(api_key=api_key, api_url=api_url)
 
         # Set the Argilla variables
         self.dataset_name = dataset_name
