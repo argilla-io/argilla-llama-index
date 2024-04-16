@@ -25,6 +25,46 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
     without the need to create a dataset and log the predictions manually. Events relevant
     to the predictions are automatically logged to Argilla as well, including timestamps of
     all the different steps of the retrieval and prediction process.
+
+    Attributes:
+        dataset_name (str): The name of the Argilla dataset.
+        number_of_retrievals (int): The number of retrievals to log.
+        workspace_name (str): The name of the Argilla workspace.
+        api_url (str): Argilla API URL.
+        api_key (str): Argilla API key.
+        event_starts_to_ignore (List[CBEventType]): List of event types to ignore at the start of the trace.
+        event_ends_to_ignore (List[CBEventType]): List of event types to ignore at the end of the trace.
+        handlers (List[BaseCallbackHandler]): List of extra handlers to include.
+
+    Methods:
+        start_trace(trace_id: Optional[str] = None) -> None:
+            Logic to be executed at the beggining of the tracing process.
+
+        end_trace(trace_id: Optional[str] = None, trace_map: Optional[Dict[str, List[str]]] = None) -> None:
+            Logic to be executed at the end of the tracing process.
+
+        on_event_start(event_type: CBEventType, payload: Optional[Dict[str, Any]] = None, event_id: Optional[str] = None, parent_id: str = None) -> str:
+            Store event start data by event type. Executed at the start of an event.
+        
+        on_event_end(event_type: CBEventType, payload: Optional[Dict[str, Any]] = None, event_id: str = None) -> None:
+            Store event end data by event type. Executed at the end of an event.
+
+    Usage:
+    ```python
+    from llama_index.core import VectorStoreIndex, ServiceContext, SimpleDirectoryReader, set_global_handler
+    from llama_index.llms.openai import OpenAI
+
+    set_global_handler("argilla", dataset_name="query_model")
+
+    llm = OpenAI(model="gpt-3.5-turbo", temperature=0.8, openai_api_key=os.getenv("OPENAI_API_KEY"))
+
+    service_context = ServiceContext.from_defaults(llm=llm)
+    docs = SimpleDirectoryReader("../../data").load_data()
+    index = VectorStoreIndex.from_documents(docs, service_context=service_context)
+    query_engine = index.as_query_engine()
+
+    response = query_engine.query("What did the author do growing up?")
+    ```
     """
 
     def __init__(
@@ -633,7 +673,7 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
         parent_id: str = None,
     ) -> str:
         """
-        Store event start data by event type.
+        Store event start data by event type. Executed at the start of an event.
 
         Args:
             event_type (CBEventType): The event type to store.
@@ -657,7 +697,7 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
         event_id: str = None,
     ) -> None:
         """
-        Store event end data by event type.
+        Store event end data by event type. Executed at the end of an event.
 
         Args:
             event_type (CBEventType): The event type to store.
