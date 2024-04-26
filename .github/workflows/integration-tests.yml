@@ -12,7 +12,6 @@ jobs:
     services:
       search-engine:
         image:
-          searchEngineDockerImage:
             description: "The name of the Docker image of the search engine to use."
             default: docker.elastic.co/elasticsearch/elasticsearch:8.8.2
             required: false
@@ -20,7 +19,6 @@ jobs:
         ports:
           - 6900:6900
         env:
-          searchEngineDockerEnv:
             description: "The name of the Docker image of the search engine to use."
             default: '{"discovery.type": "single-node", "xpack.security.enabled": "false"}'
             required: false
