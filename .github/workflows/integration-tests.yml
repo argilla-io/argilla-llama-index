@@ -13,8 +13,6 @@ jobs:
       image: argilla/argilla-quickstart:latest
       ports:
         - 6900:6900
-      networks:
-        - argilla-net
       name: argilla
     defaults:
       run:
