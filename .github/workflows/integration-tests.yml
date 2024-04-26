@@ -11,18 +11,10 @@ jobs:
     runs-on: ubuntu-latest
     services:
       search-engine:
-        image:
-            description: "The name of the Docker image of the search engine to use."
-            default: docker.elastic.co/elasticsearch/elasticsearch:8.8.2
-            required: false
-            type: string
+        image: docker.elastic.co/elasticsearch/elasticsearch:8.8.2
         ports:
           - 6900:6900
-        env:
-            description: "The name of the Docker image of the search engine to use."
-            default: '{"discovery.type": "single-node", "xpack.security.enabled": "false"}'
-            required: false
-            type: string
+        env: '{"discovery.type": "single-node", "xpack.security.enabled": "false"}'
     defaults:
       run:
         shell: bash -l {0}
