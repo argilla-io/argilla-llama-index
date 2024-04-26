@@ -52,15 +52,15 @@ jobs:
         run: |
           echo "ARGILLA_SEARCH_ENGINE=opensearch" >> "$GITHUB_ENV"
           echo "Configure opensearch engine"
-      - name: Launch Argilla Server
-        env:
-          ARGILLA_ENABLE_TELEMETRY: 0
-        run: docker run -d --network argilla-net --name quickstart -p 6900:6900 argilla/argilla-quickstart:latest
-        # run: |
-        #   pip install argilla[server]
-        #   python -m argilla server database migrate
-        #   python -m argilla server database users create_default
-        #   python -m argilla server start &
+      # - name: Launch Argilla Server
+      #   env:
+      #     ARGILLA_ENABLE_TELEMETRY: 0
+      #   run:
+      #   # run: |
+      #   #   pip install argilla[server]
+      #   #   python -m argilla server database migrate
+      #   #   python -m argilla server database users create_default
+      #   #   python -m argilla server start &
       - name: Run end2end examples 📈
         env:
           ARGILLA_ENABLE_TELEMETRY: 0
