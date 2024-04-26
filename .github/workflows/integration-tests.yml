@@ -56,7 +56,7 @@ jobs:
         env:
           ARGILLA_ENABLE_TELEMETRY: 0
         run: |
-          pip install argilla
+          pip install argilla[server]
           python -m argilla server database migrate
           python -m argilla server database users create_default
           python -m argilla server start &
