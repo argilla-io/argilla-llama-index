@@ -9,11 +9,14 @@ jobs:
   integration_tests:
     name: Running integration tests, which require an Argilla instance running
     runs-on: ubuntu-latest
-    services:
-      search-engine:
-        image: docker.elastic.co/elasticsearch/elasticsearch:8.8.2
-        ports:
-          - 6800:6800
+    container:
+      image: argilla/argilla-quickstart:latest
+      env:
+      ports:
+        - 6900:6900
+      networks:
+        - argilla-net
+      name: argilla
     defaults:
       run:
         shell: bash -l {0}
