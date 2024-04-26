@@ -13,7 +13,7 @@ jobs:
       search-engine:
         image: docker.elastic.co/elasticsearch/elasticsearch:8.8.2
         ports:
-          - 6900:6900
+          - 6800:6800
     defaults:
       run:
         shell: bash -l {0}
@@ -55,11 +55,12 @@ jobs:
       - name: Launch Argilla Server
         env:
           ARGILLA_ENABLE_TELEMETRY: 0
-        run: |
-          pip install argilla[server]
-          python -m argilla server database migrate
-          python -m argilla server database users create_default
-          python -m argilla server start &
+        run: docker run -d --network argilla-net --name quickstart -p 6900:6900 argilla/argilla-quickstart:latest
+        # run: |
+        #   pip install argilla[server]
+        #   python -m argilla server database migrate
+        #   python -m argilla server database users create_default
+        #   python -m argilla server start &
       - name: Run end2end examples 📈
         env:
           ARGILLA_ENABLE_TELEMETRY: 0
