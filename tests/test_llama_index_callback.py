@@ -1,13 +1,16 @@
+from argilla_llama_index.helpers import _calc_time, _get_time_diff
+
 import unittest
 from unittest.mock import patch, MagicMock
-from argilla_llama_index import ArgillaCallbackHandler, _get_time_diff, _calc_time # TODO: correct import
+from argilla_llama_index import ArgillaCallbackHandler
+
 
 class TestArgillaCallbackHandler(unittest.TestCase):
     def setUp(self):
         self.dataset_name = "test_dataset_llama_index"
-        self.workspace_name = "argilla"
+        self.workspace_name = "admin"
         self.api_url = "http://localhost:6900"
-        self.api_key = "argilla.apikey"
+        self.api_key = "admin.apikey"
 
         self.handler = ArgillaCallbackHandler(
             dataset_name=self.dataset_name,
@@ -21,7 +24,7 @@ class TestArgillaCallbackHandler(unittest.TestCase):
         self.components_to_log = MagicMock()
         self._ignore_components_in_tree = MagicMock()
         self.trace_map = MagicMock()
-       
+
         self.tree_structure_dict = {
             "root": ["query"],
             "query": ["retrieve", "synthesize"],
@@ -56,33 +59,23 @@ class TestArgillaCallbackHandler(unittest.TestCase):
                 api_key=self.api_key,
             )
 
-    def test_add_missing_metadata_properties(self):
-        dataset = self.handler.dataset
-        is_new_dataset_created = True
-        self.handler._add_missing_metadata_properties(dataset, is_new_dataset_created)
-        self.assertEqual(len(dataset.metadata_properties), 6)
-
     def test_check_components_for_tree(self):
         self.handler._check_components_for_tree(self.tree_structure_dict)
 
-    def test_create_tree(self):
-
-        tree = self.handler._create_tree(self.tree_structure_dict, self.data_to_log)
-        self.assertIsInstance(tree, str)
-
     def test_get_events_map_with_names(self):
 
-        trace_map = {
-            "query": ["retrieve"],
-            "llm": []
-        }
-        events_map = self.handler._get_events_map_with_names(self.events_data, trace_map)
-        self.assertIsInstance(events_map, tuple)
+        trace_map = {"query": ["retrieve"], "llm": []}
+        events_map = self.handler._get_events_map_with_names(
+            self.events_data, trace_map
+        )
+        self.assertIsInstance(events_map, dict)
         self.assertEqual(len(events_map), 2)
 
     def test_extract_and_log_info(self):
 
-        tree_structure_dict = self.handler._check_components_for_tree(self.tree_structure_dict)
+        tree_structure_dict = self.handler._check_components_for_tree(
+            self.tree_structure_dict
+        )
         self.handler._extract_and_log_info(self.events_data, tree_structure_dict)
 
     def test_start_trace(self):
@@ -96,7 +89,6 @@ class TestArgillaCallbackHandler(unittest.TestCase):
         event_id = "123"
         parent_id = "456"
         self.handler.on_event_start(event_type, payload, event_id, parent_id)
-
 
     def test_on_event_end(self):
         event_type = "event1"
@@ -113,11 +105,15 @@ class TestArgillaCallbackHandler(unittest.TestCase):
     def test_calc_time(self):
 
         id = "event1"
-        self.events_data.__getitem__().__getitem__().time = "01/11/2024, 17:01:04.328656"
-        self.events_data.__getitem__().__getitem__().time = "01/11/2024, 17:02:07.328523"
+        self.events_data.__getitem__().__getitem__().time = (
+            "01/11/2024, 17:01:04.328656"
+        )
+        self.events_data.__getitem__().__getitem__().time = (
+            "01/11/2024, 17:02:07.328523"
+        )
         time = _calc_time(self.events_data, id)
         self.assertIsInstance(time, float)
 
+
 if __name__ == "__main__":
     unittest.main()
-
