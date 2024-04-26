@@ -61,6 +61,8 @@ jobs:
       #   #   python -m argilla server database migrate
       #   #   python -m argilla server database users create_default
       #   #   python -m argilla server start &
+      - name: Netsat
+        run: netstat -lt
       - name: Run end2end examples 📈
         env:
           ARGILLA_ENABLE_TELEMETRY: 0
