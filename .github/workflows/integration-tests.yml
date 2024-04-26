@@ -63,7 +63,8 @@ jobs:
       #   #   python -m argilla server start &
       - name: Netsat
         run: |
-          apt install net-tools
+          apt update && apt install sudo
+          sudo apt install net-tools
           netstat -lt
       - name: Run end2end examples 📈
         env:
