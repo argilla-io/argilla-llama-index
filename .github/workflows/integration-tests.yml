@@ -13,6 +13,7 @@ jobs:
       image: argilla/argilla-quickstart:latest
       options: --user root
       ports:
+        - 9200:9200
         - 6900:6900
     defaults:
       run:
