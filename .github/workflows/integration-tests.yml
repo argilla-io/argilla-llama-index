@@ -9,11 +9,12 @@ jobs:
   integration_tests:
     name: Running integration tests, which require an Argilla instance running
     runs-on: ubuntu-latest
-    container:
-      image: argilla/argilla-quickstart:latest
-      options: --user root
-      ports:
-        - 6900:6900
+    services:
+      argilla:
+        image: argilla/argilla-quickstart:latest
+        options: --user root
+        ports:
+          - 6900:6900
     defaults:
       run:
         shell: bash -l {0}
