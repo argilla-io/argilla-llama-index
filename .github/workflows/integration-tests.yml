@@ -70,7 +70,7 @@ jobs:
 
       - name: Telnet
         run: |
-          sudo apt install telnet
+          sudo apt install telnet --assume-yes
           telnet localhost 6900
       - name: Run end2end examples 📈
         env:
