@@ -54,7 +54,7 @@ jobs:
 
       - name: Whoami
         run: |
-          argilla login --api-url 127.0.0.1:6900 --api-key admin.apikey
+          argilla login --api-url http://127.0.0.1:6900 --api-key admin.apikey
           argilla whoami
 
       - name: Info
