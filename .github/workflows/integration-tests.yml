@@ -47,11 +47,19 @@ jobs:
           apt update && apt install sudo
           sudo apt install net-tools
           netstat -lt
+      - name: Install pytest
+        run: |
+          pip install pytest
+          pip install -e .
+
+      - name: Whoami
+        run: argilla whoami
+
+      - name: Info
+        run: argilla info
       - name: Run end2end examples 📈
         env:
           ARGILLA_ENABLE_TELEMETRY: 0
         run: |
-          pip install pytest
-          pip install -e .
           pytest tests
 
