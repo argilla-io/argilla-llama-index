@@ -13,7 +13,6 @@ jobs:
       image: argilla/argilla-quickstart:latest
       options: --user root
       ports:
-        - 9200:9200
         - 6900:6900
     defaults:
       run:
@@ -71,7 +70,7 @@ jobs:
       - name: Telnet
         run: |
           sudo apt install telnet --assume-yes
-          telnet localhost 6900
+          telnet http://127.0.0.1:6900
       - name: Run end2end examples 📈
         env:
           ARGILLA_ENABLE_TELEMETRY: 0
