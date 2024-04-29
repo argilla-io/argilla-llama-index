@@ -53,7 +53,9 @@ jobs:
           pip install -e .
 
       - name: Whoami
-        run: argilla whoami
+        run: |
+          argilla login --api-url http://localhost:6900
+          argilla whoami
 
       - name: Info
         run: argilla info
