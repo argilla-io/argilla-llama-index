@@ -42,35 +42,11 @@ jobs:
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ env.CACHE_NUMBER }}-${{ hashFiles('pyproject.toml') }}
-      - name: Set Argilla search engine env variable
-        if: startsWith(inputs.searchEngineDockerImage, 'docker.elastic.co')
-        run: |
-          echo "ARGILLA_SEARCH_ENGINE=elasticsearch" >> "$GITHUB_ENV"
-          echo "Configure elasticsearch engine"
-      - name: Set Argilla search engine env variable
-        if: startsWith(inputs.searchEngineDockerImage, 'opensearchproject')
-        run: |
-          echo "ARGILLA_SEARCH_ENGINE=opensearch" >> "$GITHUB_ENV"
-          echo "Configure opensearch engine"
-      # - name: Launch Argilla Server
-      #   env:
-      #     ARGILLA_ENABLE_TELEMETRY: 0
-      #   run:
-      #   # run: |
-      #   #   pip install argilla[server]
-      #   #   python -m argilla server database migrate
-      #   #   python -m argilla server database users create_default
-      #   #   python -m argilla server start &
       - name: Netsat
         run: |
           apt update && apt install sudo
           sudo apt install net-tools
           netstat -lt
-
-      - name: Telnet
-        run: |
-          sudo apt install telnet --assume-yes
-          telnet http://127.0.0.1:6900
       - name: Run end2end examples 📈
         env:
           ARGILLA_ENABLE_TELEMETRY: 0
