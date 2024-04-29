@@ -69,7 +69,9 @@ jobs:
           netstat -lt
 
       - name: Telnet
-        run: telnet localhost 6900
+        run: |
+          sudo apt install telnet
+          telnet localhost 6900
       - name: Run end2end examples 📈
         env:
           ARGILLA_ENABLE_TELEMETRY: 0
