@@ -67,6 +67,9 @@ jobs:
           apt update && apt install sudo
           sudo apt install net-tools
           netstat -lt
+
+      - name: Telnet
+        run: telnet localhost 6900
       - name: Run end2end examples 📈
         env:
           ARGILLA_ENABLE_TELEMETRY: 0
