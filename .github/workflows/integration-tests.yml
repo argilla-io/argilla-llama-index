@@ -22,7 +22,7 @@ jobs:
     - name: Curl
       run: 
       curl http://argilla:6900/api/docs
-      
+    
       # - name: Checkout Code 🛎
       #   uses: actions/checkout@v3
       # - name: Setup Conda Env 🐍
