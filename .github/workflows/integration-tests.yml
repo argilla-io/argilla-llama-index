@@ -12,7 +12,6 @@ jobs:
     services:
       argilla:
         image: argilla/argilla-quickstart:latest
-        options: --user root
         ports:
           - 6900:6900
     defaults:
