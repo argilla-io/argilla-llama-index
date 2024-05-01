@@ -19,6 +19,9 @@ jobs:
       run:
         shell: bash -l {0}
     steps:
+    - name: Wait for argilla-quickstart to start
+      run: |
+        while ! nc -z localhost 6900; do sleep 1; done
     - name: Curl
       run: curl http://127.0.0.1:6900/api/docs
       # - name: Checkout Code 🛎
