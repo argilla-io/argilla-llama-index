@@ -21,9 +21,9 @@ jobs:
     steps:
     - name: Wait for argilla-quickstart to start
       run: |
-        while ! curl http://localhost:6900/api/_status; do sleep 1; done
+        while ! curl -XGET http://localhost:6900/api/_status; do sleep 1; done
     - name: Curl
-      run: curl -XGET http://localhost:6900/api/docs
+      run: curl -XGET http://localhost:6900/api/_status
       # - name: Checkout Code 🛎
       #   uses: actions/checkout@v3
       # - name: Setup Conda Env 🐍
