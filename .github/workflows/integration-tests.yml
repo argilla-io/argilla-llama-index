@@ -19,43 +19,44 @@ jobs:
       run:
         shell: bash -l {0}
     steps:
-    - name: Sleep 2 minutes
-      run: sleep 120
-    - name: Curl
-      run: curl http://127.0.0.1:6900/api/docs
-      # - name: Checkout Code 🛎
-      #   uses: actions/checkout@v3
-      # - name: Setup Conda Env 🐍
-      #   uses: conda-incubator/setup-miniconda@v2
-      #   with:
-      #     miniforge-variant: Mambaforge
-      #     miniforge-version: latest
-      #     use-mamba: true
-      #     activate-environment: argilla
-      # - name: Get date for conda cache
-      #   id: get-date
-      #   run: echo "::set-output name=today::$(/bin/date -u '+%Y%m%d')"
-      #   shell: bash
-      # - name: Cache Conda env
-      #   uses: actions/cache@v3
-      #   id: cache
-      #   with:
-      #     path: ${{ env.CONDA }}/envs
-      #     key: conda-${{ runner.os }}--${{ runner.arch }}--${{ steps.get-date.outputs.today }}-${{ hashFiles('environment_dev.yml') }}-${{ env.CACHE_NUMBER }}
-      # - name: Cache pip 👜
-      #   uses: actions/cache@v3
-      #   with:
-      #     path: ~/.cache/pip
-      #     key: ${{ runner.os }}-pip-${{ env.CACHE_NUMBER }}-${{ hashFiles('pyproject.toml') }}
-      # - name: Netsat
-      #   run: |
-      #     apt update && apt install sudo
-      #     sudo apt install net-tools
-      #     netstat -lt
-      # - name: Install pytest
-      #   run: |
-      #     pip install pytest
-      #     pip install -e .
+      - name: Wait for argilla-quickstart to start
+        run: |
+          while ! curl -XGET http://localhost:6900/api/_status; do sleep 1; done
+      - name: Curl
+        run: curl -XGET http://localhost:6900/api/_status
+      - name: Checkout Code 🛎
+        uses: actions/checkout@v3
+      - name: Setup Conda Env 🐍
+        uses: conda-incubator/setup-miniconda@v2
+        with:
+          miniforge-variant: Mambaforge
+          miniforge-version: latest
+          use-mamba: true
+          activate-environment: argilla
+      - name: Get date for conda cache
+        id: get-date
+        run: echo "::set-output name=today::$(/bin/date -u '+%Y%m%d')"
+        shell: bash
+      - name: Cache Conda env
+        uses: actions/cache@v3
+        id: cache
+        with:
+          path: ${{ env.CONDA }}/envs
+          key: conda-${{ runner.os }}--${{ runner.arch }}--${{ steps.get-date.outputs.today }}-${{ hashFiles('environment_dev.yml') }}-${{ env.CACHE_NUMBER }}
+      - name: Cache pip 👜
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ env.CACHE_NUMBER }}-${{ hashFiles('pyproject.toml') }}
+      - name: Netsat
+        run: |
+          apt update && apt install sudo
+          sudo apt install net-tools
+          netstat -lt
+      - name: Install pytest
+        run: |
+          pip install pytest
+          pip install -e .
 
       # - name: Whoami
       #   run: |
@@ -64,9 +65,9 @@ jobs:
 
       # - name: Info
       #   run: argilla info
-      # - name: Run end2end examples 📈
-      #   env:
-      #     ARGILLA_ENABLE_TELEMETRY: 0
-      #   run: |
-      #     pytest tests
+      - name: Run end2end examples 📈
+        env:
+          ARGILLA_ENABLE_TELEMETRY: 0
+        run: |
+          pytest tests
 
