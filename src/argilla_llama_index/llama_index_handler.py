@@ -124,7 +124,7 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
             api_key = DEFAULT_API_KEY
 
         
-        rg.init(api_key=api_key, api_url=api_url)
+        rg.init(api_key=api_key, api_url=api_url, workspace=workspace_name or rg.get_workspace())
 
         # Set the Argilla variables
         self.dataset_name = dataset_name
