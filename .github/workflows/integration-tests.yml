@@ -54,14 +54,6 @@ jobs:
         run: |
           pip install pytest
           pip install -e .
-
-      # - name: Whoami
-      #   run: |
-      #     argilla login --api-url http://argilla-quickstart:6900 --api-key admin.apikey
-      #     argilla whoami
-
-      # - name: Info
-      #   run: argilla info
       - name: 📈 Run end2end examples 
         env:
           ARGILLA_ENABLE_TELEMETRY: 0
