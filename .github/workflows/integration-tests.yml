@@ -10,74 +10,53 @@ jobs:
     name: Running integration tests, which require an Argilla instance running
     runs-on: ubuntu-latest
     services:
-      search-engine:
-        image:
-          searchEngineDockerImage:
-            description: "The name of the Docker image of the search engine to use."
-            default: docker.elastic.co/elasticsearch/elasticsearch:8.8.2
-            required: false
-            type: string
+      argilla:
+        image: argilla/argilla-quickstart:latest
         ports:
           - 6900:6900
-        env:
-          searchEngineDockerEnv:
-            description: "The name of the Docker image of the search engine to use."
-            default: '{"discovery.type": "single-node", "xpack.security.enabled": "false"}'
-            required: false
-            type: string
     defaults:
       run:
         shell: bash -l {0}
     steps:
-      - name: Checkout Code 🛎
+      - name: 🪑 Wait for argilla-quickstart
+        run: |
+          while ! curl -XGET http://localhost:6900/api/_status; do sleep 30; done
+      - name: 🛎 Checkout Code 
         uses: actions/checkout@v3
-      - name: Setup Conda Env 🐍
+      - name: 🐍 Setup Conda Env 
         uses: conda-incubator/setup-miniconda@v2
         with:
           miniforge-variant: Mambaforge
           miniforge-version: latest
           use-mamba: true
           activate-environment: argilla
-      - name: Get date for conda cache
+      - name: 🐍 Get date for Conda cache
         id: get-date
         run: echo "::set-output name=today::$(/bin/date -u '+%Y%m%d')"
         shell: bash
-      - name: Cache Conda env
+      - name: 🐍 Cache Conda env
         uses: actions/cache@v3
         id: cache
         with:
           path: ${{ env.CONDA }}/envs
           key: conda-${{ runner.os }}--${{ runner.arch }}--${{ steps.get-date.outputs.today }}-${{ hashFiles('environment_dev.yml') }}-${{ env.CACHE_NUMBER }}
-      - name: Update environment
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: mamba env update -n argilla -f environment_dev.yml
-      - name: Cache pip 👜
+      - name: 👜 Cache pip 
         uses: actions/cache@v3
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ env.CACHE_NUMBER }}-${{ hashFiles('pyproject.toml') }}
-      - name: Set Argilla search engine env variable
-        if: startsWith(inputs.searchEngineDockerImage, 'docker.elastic.co')
+      - name: 🛜 Netsat
         run: |
-          echo "ARGILLA_SEARCH_ENGINE=elasticsearch" >> "$GITHUB_ENV"
-          echo "Configure elasticsearch engine"
-      - name: Set Argilla search engine env variable
-        if: startsWith(inputs.searchEngineDockerImage, 'opensearchproject')
-        run: |
-          echo "ARGILLA_SEARCH_ENGINE=opensearch" >> "$GITHUB_ENV"
-          echo "Configure opensearch engine"
-      - name: Launch Argilla Server
-        env:
-          ARGILLA_ENABLE_TELEMETRY: 0
-        run: |
-          pip install -e ".[server]"
-          python -m argilla server database migrate
-          python -m argilla server database users create_default
-          python -m argilla server start &
-      - name: Run end2end examples 📈
-        env:
-          ARGILLA_ENABLE_TELEMETRY: 0
+          apt update && apt install sudo
+          sudo apt install net-tools
+          netstat -lt
+      - name: 🗃️ Install pytest
         run: |
           pip install pytest
+          pip install -e .
+      - name: 📈 Run end2end examples 
+        env:
+          ARGILLA_ENABLE_TELEMETRY: 0
+        run: |
           pytest tests
 
