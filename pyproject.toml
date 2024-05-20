@@ -21,7 +21,8 @@ dependencies = [
     "argilla >= 1.22.0",
     "llama-index >= 0.10.0",
     "packaging >= 23.2",
-    "typing-extensions >= 4.3.0"
+    "typing-extensions >= 4.3.0",
+    llama-index-callbacks-argilla >= 0.1.4,
 ]
 dynamic = ["version"]
 
