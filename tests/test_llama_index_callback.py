@@ -1,20 +1,20 @@
-from argilla_llama_index.helpers import _calc_time, _get_time_diff
-
 import unittest
-from unittest.mock import patch, MagicMock
+from collections import defaultdict
+from datetime import datetime, timedelta
+from unittest.mock import MagicMock, patch
+
 from argilla_llama_index import ArgillaCallbackHandler
+from argilla_llama_index.helpers import _calc_time, _create_svg, _get_time_diff
 
 
 class TestArgillaCallbackHandler(unittest.TestCase):
     def setUp(self):
         self.dataset_name = "test_dataset_llama_index"
-        self.workspace_name = "admin"
         self.api_url = "http://localhost:6900"
-        self.api_key = "admin.apikey"
+        self.api_key = "argilla.apikey"
 
         self.handler = ArgillaCallbackHandler(
             dataset_name=self.dataset_name,
-            workspace_name=self.workspace_name,
             api_url=self.api_url,
             api_key=self.api_key,
         )
@@ -33,30 +33,27 @@ class TestArgillaCallbackHandler(unittest.TestCase):
 
     def test_init(self):
         self.assertEqual(self.handler.dataset_name, self.dataset_name)
-        self.assertEqual(self.handler.workspace_name, self.workspace_name)
 
-    @patch("argilla_llama_index.llama_index_handler.rg.init")
+    @patch("argilla_llama_index.llama_index_handler.rg.Argilla")
     def test_init_connection_error(self, mock_init):
         mock_init.side_effect = ConnectionError("Connection failed")
         with self.assertRaises(ConnectionError):
             ArgillaCallbackHandler(
                 dataset_name=self.dataset_name,
-                workspace_name=self.workspace_name,
                 api_url=self.api_url,
                 api_key=self.api_key,
             )
 
-    @patch("argilla_llama_index.llama_index_handler.rg.FeedbackDataset.list")
-    @patch("argilla_llama_index.llama_index_handler.rg.FeedbackDataset.from_argilla")
-    def test_init_file_not_found_error(self, mock_from_argilla, mock_list):
+    @patch("argilla_llama_index.llama_index_handler.rg.Argilla.datasets")
+    @patch("argilla_llama_index.llama_index_handler.rg.Argilla.datasets", new_callable=MagicMock)
+    def test_init_file_not_found_error(self, mock_list, mock_from_argilla):
         mock_list.return_value = []
         mock_from_argilla.side_effect = FileNotFoundError("Dataset not found")
         with self.assertRaises(FileNotFoundError):
             ArgillaCallbackHandler(
-                dataset_name=self.dataset_name,
-                workspace_name=self.workspace_name,
-                api_url=self.api_url,
-                api_key=self.api_key,
+                dataset_name="test_dataset",
+                api_url="http://example.com",
+                api_key="test_key",
             )
 
     def test_check_components_for_tree(self):
@@ -80,8 +77,34 @@ class TestArgillaCallbackHandler(unittest.TestCase):
 
     def test_start_trace(self):
         self.handler.start_trace()
+        self.assertIsNotNone(self.handler._start_time)
+        self.assertEqual(self.handler._trace_map, defaultdict(list))
 
-    # TODO: Create a test for end_trace
+
+    @patch(
+        "argilla_llama_index.llama_index_handler.ArgillaCallbackHandler._create_root_and_other_nodes"
+    )
+    @patch(
+        "argilla_llama_index.llama_index_handler.ArgillaCallbackHandler._extract_and_log_info"
+    )
+    def test_end_trace(
+        self, mock_extract_and_log_info, mock_create_root_and_other_nodes
+    ):
+        self.handler.start_trace()
+        trace_id = "test_trace_id"
+        trace_map = {"test_key": ["test_value"]}
+
+        self.handler.end_trace(trace_id=trace_id, trace_map=trace_map)
+        self.assertIsNotNone(self.handler._end_time)
+        self.assertAlmostEqual(
+            self.handler._end_time, datetime.now(), delta=timedelta(seconds=1)
+        )
+        self.assertEqual(self.handler._trace_map, trace_map)
+
+        mock_create_root_and_other_nodes.assert_called_once_with(trace_map)
+        mock_extract_and_log_info.assert_called_once_with(
+            self.handler.events_data, trace_map
+        )
 
     def test_on_event_start(self):
         event_type = "event1"
@@ -103,7 +126,6 @@ class TestArgillaCallbackHandler(unittest.TestCase):
         self.assertIsInstance(time_diff, float)
 
     def test_calc_time(self):
-
         id = "event1"
         self.events_data.__getitem__().__getitem__().time = (
             "01/11/2024, 17:01:04.328656"
@@ -113,6 +135,23 @@ class TestArgillaCallbackHandler(unittest.TestCase):
         )
         time = _calc_time(self.events_data, id)
         self.assertIsInstance(time, float)
+
+    def test_create_svg(self):
+        data = [
+            (0, 1, "Node1", "10ms"),
+            (1, 2, "Node2", "20ms")
+        ]
+
+        result = _create_svg(data)
+
+        self.assertIn('<svg id="Layer_1"', result)
+        self.assertIn('viewBox="0 0 750 108"', result)
+        self.assertIn('<g transform="translate(40, 0)">', result)
+        self.assertIn('<tspan x="0" y="0">Node1</tspan>', result)
+        self.assertIn('<tspan x="0" y="0">10ms</tspan>', result)
+        self.assertIn('<g transform="translate(80, 54)">', result)
+        self.assertIn('<tspan x="0" y="0">Node2</tspan>', result)
+        self.assertIn('<tspan x="0" y="0">20ms</tspan>', result)
 
 
 if __name__ == "__main__":
