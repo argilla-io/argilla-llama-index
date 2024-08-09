@@ -76,8 +76,8 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
     def __init__(  # noqa: C901
         self,
         dataset_name: str,
-        api_url: str = None,
-        api_key: str = None,
+        api_url: Optional[str] = None,
+        api_key: Optional[str] = None,
         number_of_retrievals: int = 0,
         workspace_name: Optional[str] = None,
         event_starts_to_ignore: Optional[List[CBEventType]] = None,
@@ -89,16 +89,7 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
         self.handlers = handlers or []
         self.number_of_retrievals = number_of_retrievals
 
-        try:
-            import argilla as rg
-
-            self.ARGILLA_VERSION = rg.__version__
-
-        except ImportError as e:
-            raise ImportError(
-                "To use the Argilla callback manager, you need to have the `argilla` "
-                "Python package installed. Please install it with `pip install argilla`"
-            ) from e
+        self.ARGILLA_VERSION = rg.__version__
 
         if parse(self.ARGILLA_VERSION) < parse("2.0.0"):
             raise ImportError(
@@ -107,7 +98,9 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
                 "upgrade `argilla` with `pip install --upgrade argilla`."
             )
 
-        if None in (api_url, api_key):
+        if (api_url is None and os.getenv("ARGILLA_API_URL") is None) or (
+            api_key is None and os.getenv("ARGILLA_API_KEY") is None
+        ):
             raise ValueError(
                 "Both `api_url` and `api_key` must be set. The current values are: "
                 f"`api_url`={api_url} and `api_key`={api_key}."
