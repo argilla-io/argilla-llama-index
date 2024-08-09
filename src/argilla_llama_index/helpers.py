@@ -41,6 +41,7 @@ def _calc_time(events_data: Dict[str, List[CBEvent]], id: str) -> float:
     end_time = events_data[id][1].time
     return _get_time_diff(start_time, end_time)
 
+
 def _create_svg(data: List) -> str:
     """
     Create an SVG file from the data.
@@ -52,36 +53,34 @@ def _create_svg(data: List) -> str:
         str: The SVG file.
     """
 
-    # The box height affects all other values as well
-    # Others can be adjusted individually if needed
-    box_height = 47
-    box_width = box_height * 8.65
-    row_constant = box_height + 7
-    indent_constant = 40
-    font_size_node_name = box_height * 0.4188
-    font_size_time = font_size_node_name - 4
-    text_centering = box_height * 0.6341
-    node_name_indent = box_height * 0.35
-    time_indent = box_height * 7.15
+    svg_template = """
+<g transform="translate({x}, {y})">
+    <rect x=".5" y=".5" width="{width}" height="47" rx="8.49" ry="8.49" style="fill: #24272e; stroke: #afdfe5; stroke-miterlimit: 10;"/>
+    <text transform="translate({node_name_indent} {text_centering})" style="fill: #fff; font-size: {font_size_node_name}px;">
+        <tspan x="0" y="0">{node_name}</tspan>
+    </text>
+    <text transform="translate({time_indent} {text_centering})" style="fill: #b7d989; font-size: {font_size_time}px; font-style: italic;">
+        <tspan x="0" y="0">{node_time}</tspan>
+    </text>
+</g>"""
 
-    body = ""
-    for each in data:
-        row, indent, node_name, node_time = each
-        body_raw = f"""
-<g transform="translate({indent*indent_constant}, {row*row_constant})">
-<rect x=".5" y=".5" width="{box_width}" height="{box_height}" rx="8.49" ry="8.49" style="fill: #24272e; stroke: #afdfe5; stroke-miterlimit: 10;"/>
-<text transform="translate({node_name_indent} {text_centering})" style="fill: #fff; font-size: {font_size_node_name}px;"><tspan x="0" y="0">{node_name}</tspan></text>
-<text transform="translate({time_indent} {text_centering})" style="fill: #b7d989; font-size: {font_size_time}px; font-style: italic;"><tspan x="0" y="0">{node_time}</tspan></text>
-</g>
-            """
-        body += body_raw
-        base = (
-            base
-        ) = f"""
-<?xml version="1.0" encoding="UTF-8"?>
-<svg id="Layer_1" data-name="Layer 1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 750 {len(data)*row_constant}">
+    body = "".join(
+        svg_template.format(
+            x=indent * 40,
+            y=row * 54,
+            width=47 * 8.65,  # 47 is the height of the box
+            node_name_indent=47 * 0.35,
+            text_centering=47 * 0.6341,
+            font_size_node_name=47 * 0.4188,
+            node_name=node_name,
+            time_indent=47 * 7.15,
+            font_size_time=47 * 0.4188 - 4,
+            node_time=node_time,
+        )
+        for row, indent, node_name, node_time in data
+    )
+
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 750 {len(data) * 54}">
 {body}
-</svg>
-            """
-        base = base.strip()
-    return base
+</svg>"""
