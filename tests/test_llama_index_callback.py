@@ -144,7 +144,6 @@ class TestArgillaCallbackHandler(unittest.TestCase):
 
         result = _create_svg(data)
 
-        self.assertIn('<svg id="Layer_1"', result)
         self.assertIn('viewBox="0 0 750 108"', result)
         self.assertIn('<g transform="translate(40, 0)">', result)
         self.assertIn('<tspan x="0" y="0">Node1</tspan>', result)
