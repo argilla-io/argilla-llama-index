@@ -1,20 +1,20 @@
+import logging
+import os
 from collections import defaultdict
 from datetime import datetime
-import os
-from packaging.version import parse
 from typing import Any, Dict, List, Optional
-import warnings
-
-from argilla_llama_index.helpers import _calc_time, _get_time_diff
 
 import argilla as rg
-from argilla._constants import DEFAULT_API_KEY, DEFAULT_API_URL
+from argilla.markdown import chat_to_html
 from llama_index.core.callbacks.base_handler import BaseCallbackHandler
 from llama_index.core.callbacks.schema import (
+    CBEvent,
     CBEventType,
     EventPayload,
-    CBEvent,
 )
+from packaging.version import parse
+
+from argilla_llama_index.helpers import _calc_time, _create_svg, _get_time_diff
 
 
 class ArgillaCallbackHandler(BaseCallbackHandler):
@@ -28,238 +28,186 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
 
     Attributes:
         dataset_name (str): The name of the Argilla dataset.
-        number_of_retrievals (int): The number of retrievals to log.
-        workspace_name (str): The name of the Argilla workspace.
         api_url (str): Argilla API URL.
         api_key (str): Argilla API key.
+        number_of_retrievals (int): The number of retrievals to log. By default, it is set to 0.
+        workspace_name (str): The name of the Argilla workspace. By default, it will use the first available workspace.
         event_starts_to_ignore (List[CBEventType]): List of event types to ignore at the start of the trace.
         event_ends_to_ignore (List[CBEventType]): List of event types to ignore at the end of the trace.
         handlers (List[BaseCallbackHandler]): List of extra handlers to include.
 
     Methods:
         start_trace(trace_id: Optional[str] = None) -> None:
-            Logic to be executed at the beggining of the tracing process.
+            Logic to be executed at the beginning of the tracing process.
 
         end_trace(trace_id: Optional[str] = None, trace_map: Optional[Dict[str, List[str]]] = None) -> None:
             Logic to be executed at the end of the tracing process.
 
         on_event_start(event_type: CBEventType, payload: Optional[Dict[str, Any]] = None, event_id: Optional[str] = None, parent_id: str = None) -> str:
             Store event start data by event type. Executed at the start of an event.
-        
+
         on_event_end(event_type: CBEventType, payload: Optional[Dict[str, Any]] = None, event_id: str = None) -> None:
             Store event end data by event type. Executed at the end of an event.
 
     Usage:
     ```python
-    from llama_index.core import VectorStoreIndex, ServiceContext, SimpleDirectoryReader, set_global_handler
+    from llama_index.core import Settings, VectorStoreIndex, SimpleDirectoryReader, set_global_handler
+    from llama_index.core.query_engine import RetrieverQueryEngine
+    from llama_index.core.retrievers import VectorIndexRetriever
     from llama_index.llms.openai import OpenAI
 
-    set_global_handler("argilla", dataset_name="query_model")
+    set_global_handler("argilla",
+        api_url="http://localhost:6900",
+        api_key="argilla.apikey",
+        dataset_name="query_model",
+        number_of_retrievals=2
+    )
 
-    llm = OpenAI(model="gpt-3.5-turbo", temperature=0.8, openai_api_key=os.getenv("OPENAI_API_KEY"))
+    Settings.llm = OpenAI(model="gpt-3.5-turbo", temperature=0.8, openai_api_key=os.getenv("OPENAI_API_KEY"))
 
-    service_context = ServiceContext.from_defaults(llm=llm)
-    docs = SimpleDirectoryReader("../../data").load_data()
-    index = VectorStoreIndex.from_documents(docs, service_context=service_context)
+    documents = SimpleDirectoryReader("../../data").load_data()
+    index = VectorStoreIndex.from_documents(documents)
     query_engine = index.as_query_engine()
 
     response = query_engine.query("What did the author do growing up?")
     ```
     """
 
-    def __init__(
+    def __init__(  # noqa: C901
         self,
         dataset_name: str,
-        number_of_retrievals: int = 0,
-        workspace_name: Optional[str] = None,
         api_url: Optional[str] = None,
         api_key: Optional[str] = None,
+        number_of_retrievals: int = 0,
+        workspace_name: Optional[str] = None,
         event_starts_to_ignore: Optional[List[CBEventType]] = None,
         event_ends_to_ignore: Optional[List[CBEventType]] = None,
         handlers: Optional[List[BaseCallbackHandler]] = None,
     ) -> None:
-
         self.event_starts_to_ignore = event_starts_to_ignore or []
         self.event_ends_to_ignore = event_ends_to_ignore or []
         self.handlers = handlers or []
         self.number_of_retrievals = number_of_retrievals
 
-        try:
-            import argilla as rg
+        self.ARGILLA_VERSION = rg.__version__
 
-            self.ARGILLA_VERSION = rg.__version__
-
-        except ImportError:
-            raise ImportError(
-                "To use the Argilla callback manager you need to have the `argilla` "
-                "Python package installed. Please install it with `pip install argilla`"
-            )
-
-        if parse(self.ARGILLA_VERSION) < parse("1.18.0"):
+        if parse(self.ARGILLA_VERSION) < parse("2.0.0"):
             raise ImportError(
                 f"The installed `argilla` version is {self.ARGILLA_VERSION} but "
-                "`ArgillaCallbackHandler` requires at least version 1.18.0. Please "
+                "`ArgillaCallbackHandler` requires at least version 2.0.0. Please "
                 "upgrade `argilla` with `pip install --upgrade argilla`."
             )
 
-        # Ensure the API URL and API key are set, or assume the default values
-        if api_url is None and os.getenv("ARGILLA_API_URL") is None:
-            warnings.warn(
-                (
-                    "Since `api_url` is None, and the environment var `ARGILLA_API_URL` is not"
-                    f" set, it will default to `{DEFAULT_API_URL}`, which is the"
-                    " default API URL in Argilla Quickstart."
-                ),
+        if (api_url is None and os.getenv("ARGILLA_API_URL") is None) or (
+            api_key is None and os.getenv("ARGILLA_API_KEY") is None
+        ):
+            raise ValueError(
+                "Both `api_url` and `api_key` must be set. The current values are: "
+                f"`api_url`={api_url} and `api_key`={api_key}."
             )
-            api_url = DEFAULT_API_URL
 
-        if api_key is None and os.getenv("ARGILLA_API_KEY") is None:
-            warnings.warn(
-                (
-                    "Since `api_key` is None, and the environment var `ARGILLA_API_KEY` is not"
-                    f" set, it will default to `{DEFAULT_API_KEY}`, which is the"
-                    " default API key in Argilla Quickstart."
-                ),
-            )
-            api_key = DEFAULT_API_KEY
+        client = rg.Argilla(api_key=api_key, api_url=api_url)
 
-        
-        rg.init(api_key=api_key, api_url=api_url, workspace=workspace_name or rg.get_workspace())
-
-        # Set the Argilla variables
         self.dataset_name = dataset_name
-        self.workspace_name = workspace_name or rg.get_workspace()
+        self.workspace_name = workspace_name
+        self.settings = rg.Settings(
+            fields=[
+                rg.TextField(
+                    name="chat", title="Chat", use_markdown=True, required=True
+                ),
+                rg.TextField(
+                    name="time-details", title="Time Details", use_markdown=True
+                ),
+            ]
+            + self._add_context_fields(number_of_retrievals),
+            questions=[
+                rg.RatingQuestion(
+                    name="response-rating",
+                    title="Rating for the response",
+                    description="How would you rate the quality of the response?",
+                    values=[1, 2, 3, 4, 5, 6, 7],
+                    required=True,
+                ),
+                rg.TextQuestion(
+                    name="response-feedback",
+                    title="Feedback for the response",
+                    description="What feedback do you have for the response?",
+                    required=False,
+                ),
+            ]
+            + self._add_context_questions(number_of_retrievals),
+            guidelines="You're asked to rate the quality of the response and provide feedback.",
+            allow_extra_metadata=True,
+        )
 
         # Either create a new dataset or use an existing one, updating it if necessary
         try:
-            if self.dataset_name not in [ds.name for ds in rg.FeedbackDataset.list()]:
-                dataset = rg.FeedbackDataset(
-                    fields=[
-                        rg.TextField(name="prompt", required=True),
-                        rg.TextField(name="response", required=False),
-                        rg.TextField(
-                            name="time-details", title="Time Details", use_markdown=True
-                        ),
-                    ]
-                    + self._add_context_fields(number_of_retrievals),
-                    questions=[
-                        rg.RatingQuestion(
-                            name="response-rating",
-                            title="Rating for the response",
-                            description="How would you rate the quality of the response?",
-                            values=[1, 2, 3, 4, 5, 6, 7],
-                            required=True,
-                        ),
-                        rg.TextQuestion(
-                            name="response-feedback",
-                            title="Feedback for the response",
-                            description="What feedback do you have for the response?",
-                            required=False,
-                        ),
-                    ]
-                    + self._add_context_questions(number_of_retrievals),
-                    guidelines="You're asked to rate the quality of the response and provide feedback.",
-                    allow_extra_metadata=True,
-                )
+            dataset_names = [ds.name for ds in client.datasets]
 
-                self.dataset = dataset.push_to_argilla(self.dataset_name)
+            if self.dataset_name not in dataset_names:
+                dataset = rg.Dataset(
+                    name=self.dataset_name,
+                    workspace=self.workspace_name,
+                    settings=self.settings,
+                )
+                self.dataset = dataset.create()
                 self.is_new_dataset_created = True
-                warnings.warn(
-                    (
-                        f"No dataset with the name {self.dataset_name} was found in workspace "
-                        f"{self.workspace_name}. A new dataset with the name {self.dataset_name} "
-                        "has been created with the question fields `prompt` and `response`"
-                        "and the rating question `response-rating` with values 1-7 and text question"
-                        " named `response-feedback`."
-                    ),
+                logging.info(
+                    f"A new dataset with the name '{self.dataset_name}' has been created.",
                 )
 
             else:
-                # Update the existing dataset. If the fields and questions do not match, the dataset will be updated using the
-                # -updated flag in the name.
-                if self.dataset_name in [ds.name for ds in rg.FeedbackDataset.list()]:
-                    self.dataset = rg.FeedbackDataset.from_argilla(
-                        name=self.dataset_name,
-                        workspace=self.workspace_name,
+                # Update the existing dataset. If the fields and questions do not match,
+                # a new dataset will be created with the -updated flag in the name.
+                self.dataset = client.datasets(
+                    name=self.dataset_name,
+                    workspace=self.workspace_name,
+                )
+                self.is_new_dataset_created = False
+
+                if number_of_retrievals > 0:
+                    required_context_fields = self._add_context_fields(
+                        number_of_retrievals
                     )
+                    required_context_questions = self._add_context_questions(
+                        number_of_retrievals
+                    )
+                    existing_fields = list(self.dataset.fields)
+                    existing_questions = list(self.dataset.questions)
 
-                    self.is_new_dataset_created = False
-
-                    if number_of_retrievals > 0:
-                        required_context_fields = self._add_context_fields(
-                            number_of_retrievals
+                    if not (
+                        all(
+                            element in existing_fields
+                            for element in required_context_fields
                         )
-                        required_context_questions = self._add_context_questions(
-                            number_of_retrievals
+                        and all(
+                            element in existing_questions
+                            for element in required_context_questions
                         )
-                        existing_fields = [
-                            field.to_local() for field in self.dataset.fields
-                        ]
-                        existing_questions = [
-                            question.to_local() for question in self.dataset.questions
-                        ]
-                        # If the required fields and questions do not match with the existing ones, update the dataset and upload it again with "-updated" added to the name
-                        if not (
-                            all(
-                                element in existing_fields
-                                for element in required_context_fields
-                            )
-                            and all(
-                                element in existing_questions
-                                for element in required_context_questions
-                            )
-                        ):
-                            local_dataset = self.dataset.pull()
-
-                            fields_to_pop = []
-                            for index, field in enumerate(local_dataset.fields):
-                                if field.name.startswith("retrieved_document_"):
-                                    fields_to_pop.append(index)
-                                    fields_to_pop.sort(reverse=True)
-                            else:
-                                for index in fields_to_pop:
-                                    local_dataset.fields.pop(index)
-
-                            questions_to_pop = []
-                            for index, question in enumerate(local_dataset.questions):
-                                if question.name.startswith(
-                                    "rating_retrieved_document_"
-                                ):
-                                    questions_to_pop.append(index)
-                                    questions_to_pop.sort(reverse=True)
-                            else:
-                                for index in questions_to_pop:
-                                    local_dataset.questions.pop(index)
-
-                            for field in required_context_fields:
-                                local_dataset.fields.append(field)
-                            for question in required_context_questions:
-                                local_dataset.questions.append(question)
-                            self.dataset = local_dataset.push_to_argilla(
-                                self.dataset_name + "-updated"
-                            )
+                    ):
+                        self.dataset = rg.Dataset(
+                            name=f"{self.dataset_name}-updated",
+                            workspace=self.workspace_name,
+                            settings=self.settings,
+                        )
+                        self.dataset = self.dataset.create()
 
         except Exception as e:
             raise FileNotFoundError(
-                f"`FeedbackDataset` retrieval and creation both failed with exception `{e}`."
-                f" If the problem persists please report it to https://github.com/argilla-io/argilla/issues/ "
+                f"`Dataset` creation or update failed with exception `{e}`."
+                f" If the problem persists, please report it to https://github.com/argilla-io/argilla/issues/ "
                 f"as an `integration` issue."
             ) from e
 
         supported_context_fields = [
             f"retrieved_document_{i+1}" for i in range(number_of_retrievals)
         ]
-        supported_fields = [
-            "prompt",
-            "response",
-            "time-details",
-        ] + supported_context_fields
+        supported_fields = ["chat", "time-details"] + supported_context_fields
         if supported_fields != [field.name for field in self.dataset.fields]:
             raise ValueError(
-                f"`FeedbackDataset` with name={self.dataset_name} in the workspace="
-                f"{self.workspace_name} had fields that are not supported yet for the"
-                f"`llama-index` integration. Supported fields are: {supported_fields},"
-                f" and the current `FeedbackDataset` fields are {[field.name for field in self.dataset.fields]}."
+                f"`Dataset` with name={self.dataset_name} had fields that are not supported"
+                f"for the `llama-index` integration. Supported fields are {supported_fields}."
+                f" Current fields are {[field.name for field in self.dataset.fields]}."
             )
 
         self.events_data: Dict[str, List[CBEvent]] = defaultdict(list)
@@ -268,12 +216,12 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
         self.components_to_log = set()
         self.event_ids_traced = set()
 
-    def _add_context_fields(self, number_of_retrievals: int) -> List:
+    def _add_context_fields(self, number_of_retrievals: int) -> List[Any]:
         """Create the context fields to be added to the dataset."""
         context_fields = [
             rg.TextField(
-                name="retrieved_document_" + str(doc + 1),
-                title="Retrieved Document " + str(doc + 1),
+                name=f"retrieved_document_{doc + 1}",
+                title=f"Retrieved document {doc + 1}",
                 use_markdown=True,
                 required=False,
             )
@@ -281,17 +229,14 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
         ]
         return context_fields
 
-    def _add_context_questions(self, number_of_retrievals: int) -> List:
+    def _add_context_questions(self, number_of_retrievals: int) -> List[Any]:
         """Create the context questions to be added to the dataset."""
         rating_questions = [
             rg.RatingQuestion(
-                name="rating_retrieved_document_" + str(doc + 1),
-                title="Rate the relevance of the Retrieved Document "
-                + str(doc + 1)
-                + " (if present)",
+                name=f"rating_retrieved_document_{doc + 1}",
+                title=f"Rate the relevance of the Retrieved document {doc + 1} (if present)",
                 values=list(range(1, 8)),
-                # After https://github.com/argilla-io/argilla/issues/4523 is fixed, we can use the description
-                description=None,  # "Rate the relevance of the retrieved document."
+                description=f"Rate the relevance of the retrieved document {doc + 1}.",
                 required=False,
             )
             for doc in range(number_of_retrievals)
@@ -312,42 +257,20 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
 
         # TODO: If we have a component more than once, properties currently don't account for those after the first one and get overwritten
 
-    def _add_missing_metadata_properties(
+    def _add_missing_metadata(
         self,
-        dataset: rg.FeedbackDataset,
+        dataset: rg.Dataset,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Add missing metadata properties to the dataset."""
-        required_metadata_properties = []
-        for property in self.components_to_log:
-            metadata_name = f"{property}_time"
-            if property == self.root_node:
-                metadata_name = "total_time"
-            required_metadata_properties.append(metadata_name)
 
-        existing_metadata_properties = [
-            property.name for property in dataset.metadata_properties
-        ]
-        missing_metadata_properties = [
-            property
-            for property in required_metadata_properties
-            if property not in existing_metadata_properties
-        ]
-
-        for property in missing_metadata_properties:
-            title = " ".join([word.capitalize() for word in property.split("_")])
-            if title == "Llm Time":
-                title = "LLM Time"
-            dataset.add_metadata_property(
-                rg.FloatMetadataProperty(name=property, title=title)
-            )
-            if self.is_new_dataset_created == False:
-                warnings.warn(
-                    (
-                        f"The dataset given was missing some required metadata properties. "
-                        f"Missing properties were {missing_metadata_properties}. "
-                        f"Properties have been added to the dataset with "
-                    ),
-                )
+        for mt in metadata.keys():
+            if mt not in [metadata.name for metadata in self.dataset.settings.metadata]:
+                if mt.endswith("_time"):
+                    self.dataset.settings.metadata.add(
+                        rg.FloatMetadataProperty(name=mt, title=mt)
+                    )
+                    dataset.update()
 
     def _check_components_for_tree(
         self, tree_structure_dict: Dict[str, List[str]]
@@ -405,135 +328,173 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
         If we want to account for more root nodes, we just need to add them to the if statement.
         """
         events_trace_map = self._get_events_map_with_names(events_data, trace_map)
-        root_node = trace_map["root"]
+        root_node = trace_map.get("root")
+
+        if not root_node or len(root_node) != 1:
+            return
+
+        if self.root_node == "agent_step":
+            data_to_log = self._process_agent_step(events_data, root_node)
+        elif self.root_node == "query":
+            data_to_log = self._process_query(events_data, root_node)
+        else:
+            return
+
+        self.event_ids_traced.remove(root_node[0])
+        components_to_log = [
+            comp for comp in self.components_to_log if comp != self.root_node
+        ]
+        number_of_components_used = defaultdict(int)
+        retrieval_metadata = {}
+
+        for event_id in self.event_ids_traced:
+            event_name = self.event_map_id_to_name[event_id]
+            event_name_reduced = (
+                event_name.rstrip("0") if event_name.endswith("0") else event_name
+            )
+            number_of_components_used[event_name_reduced] += event_name.endswith("0")
+
+            if event_name_reduced in components_to_log:
+                data_to_log[f"{event_name}_time"] = _calc_time(events_data, event_id)
+
+            if event_name_reduced == "llm":
+                payload = events_data[event_id][0].payload
+                data_to_log.update(
+                    {
+                        f"{event_name}_system_prompt": payload.get(
+                            EventPayload.MESSAGES
+                        )[0].content,
+                        f"{event_name}_model_name": payload.get(
+                            EventPayload.SERIALIZED
+                        )["model"],
+                    }
+                )
+
+            if event_name_reduced == "retrieve":
+                for idx, retrieval_node in enumerate(
+                    events_data[event_id][1].payload.get(EventPayload.NODES), 1
+                ):
+                    if idx > self.number_of_retrievals:
+                        break
+                    retrieve_dict = retrieval_node.to_dict()
+                    retrieval_metadata.update(
+                        {
+                            f"{event_name}_document_{idx}_score": retrieval_node.score,
+                            f"{event_name}_document_{idx}_filename": retrieve_dict[
+                                "node"
+                            ]["metadata"]["file_name"],
+                            f"{event_name}_document_{idx}_text": retrieve_dict["node"][
+                                "text"
+                            ],
+                            f"{event_name}_document_{idx}_start_character": retrieve_dict[
+                                "node"
+                            ][
+                                "start_char_idx"
+                            ],
+                            f"{event_name}_document_{idx}_end_character": retrieve_dict[
+                                "node"
+                            ]["end_char_idx"],
+                        }
+                    )
+
+        metadata_to_log = {
+            key: data_to_log[key]
+            for key in data_to_log
+            if key.endswith("_time") or key not in ["query", "response"]
+        }
+        metadata_to_log["total_time"] = data_to_log.get(
+            "query_time", data_to_log.get("agent_step_time")
+        )
+        metadata_to_log.update(
+            {
+                f"number_of_{key}_used": value + 1
+                for key, value in number_of_components_used.items()
+            }
+        )
+        metadata_to_log.update(retrieval_metadata)
+
+        self._add_missing_metadata(self.dataset, metadata_to_log)
+
+        tree_structure = self._create_tree_structure(events_trace_map, data_to_log)
+        tree = _create_svg(tree_structure)
+
+        message = [
+            {"role": "user", "content": data_to_log["query"]},
+            {"role": "assistant", "content": data_to_log["response"]},
+        ]
+        fields = {
+            "chat": chat_to_html(message),
+            "time-details": tree,
+        }
+
+        if self.number_of_retrievals > 0:
+            for key in list(retrieval_metadata.keys()):
+                if key.endswith("_text"):
+                    idx = key.split("_")[-2]
+                    fields[f"retrieved_document_{idx}"] = (
+                        f"DOCUMENT SCORE: {retrieval_metadata[f'{key[:-5]}_score']}\n\n{retrieval_metadata[key]}"
+                    )
+                    del metadata_to_log[key]
+
+        valid_metadata_keys = [
+            metadata.name for metadata in self.dataset.settings.metadata
+        ]
+        metadata_to_log = {
+            k: v
+            for k, v in metadata_to_log.items()
+            if k in valid_metadata_keys or not k.endswith("_time")
+        }
+
+        self.dataset.records.log(
+            records=[
+                rg.Record(
+                    fields=fields,
+                    metadata=metadata_to_log,
+                ),
+            ]
+        )
+
+    def _process_agent_step(
+        self, events_data: Dict[str, List[CBEvent]], root_node: str
+    ) -> Dict:
+        """
+        Processes events data for 'agent_step' root node.
+        """
         data_to_log = {}
 
-        if len(root_node) == 1:
+        event_start = events_data[root_node[0]][0]
+        data_to_log["query"] = event_start.payload.get(EventPayload.MESSAGES)[0]
+        query_start_time = event_start.time
 
-            # Create logging data for the root node
-            if self.root_node == "agent_step":
-                # Event start
-                event = events_data[root_node[0]][0]
-                data_to_log["query"] = event.payload.get(EventPayload.MESSAGES)[0]
-                query_start_time = event.time
-                # Event end
-                event = events_data[root_node[0]][1]
-                data_to_log["response"] = event.payload.get(
-                    EventPayload.RESPONSE
-                ).response
-                query_end_time = event.time
-                data_to_log["agent_step_time"] = _get_time_diff(
-                    query_start_time, query_end_time
-                )
+        event_end = events_data[root_node[0]][1]
+        data_to_log["response"] = event_end.payload.get(EventPayload.RESPONSE).response
+        query_end_time = event_end.time
 
-            elif self.root_node == "query":
-                # Event start
-                event = events_data[root_node[0]][0]
-                data_to_log["query"] = event.payload.get(EventPayload.QUERY_STR)
-                query_start_time = event.time
-                # Event end
-                event = events_data[root_node[0]][1]
-                data_to_log["response"] = event.payload.get(
-                    EventPayload.RESPONSE
-                ).response
-                query_end_time = event.time
-                data_to_log["query_time"] = _get_time_diff(
-                    query_start_time, query_end_time
-                )
+        data_to_log["agent_step_time"] = _get_time_diff(
+            query_start_time, query_end_time
+        )
 
-            else:
-                return
+        return data_to_log
 
-            # Create logging data for the rest of the components
-            self.event_ids_traced.remove(root_node[0])
-            number_of_components_used = defaultdict(int)
-            components_to_log_without_root_node = self.components_to_log.copy()
-            components_to_log_without_root_node.remove(self.root_node)
-            retrieval_metadata = {}
-            for id in self.event_ids_traced:
-                event_name = self.event_map_id_to_name[id]
-                if event_name.endswith("0"):
-                    event_name_reduced = event_name.strip("0")
-                    number_of_components_used[event_name_reduced] += 1
-                else:
-                    event_name_reduced = event_name
+    def _process_query(
+        self, events_data: Dict[str, List[CBEvent]], root_node: str
+    ) -> Dict:
+        """
+        Processes events data for 'query' root node.
+        """
+        data_to_log = {}
 
-                for component in components_to_log_without_root_node:
-                    if event_name_reduced == component:
-                        data_to_log[f"{event_name}_time"] = _calc_time(events_data, id)
+        event_start = events_data[root_node[0]][0]
+        data_to_log["query"] = event_start.payload.get(EventPayload.QUERY_STR)
+        query_start_time = event_start.time
 
-                if event_name_reduced == "llm":
-                    data_to_log[f"{event_name}_system_prompt"] = (
-                        events_data[id][0].payload.get(EventPayload.MESSAGES)[0].content
-                    )
-                    data_to_log[f"{event_name}_model_name"] = events_data[id][
-                        0
-                    ].payload.get(EventPayload.SERIALIZED)["model"]
+        event_end = events_data[root_node[0]][1]
+        data_to_log["response"] = event_end.payload.get(EventPayload.RESPONSE).response
+        query_end_time = event_end.time
 
-                retrieved_document_counter = 1
-                if event_name_reduced == "retrieve":
-                    for retrieval_node in events_data[id][1].payload.get(
-                        EventPayload.NODES
-                    ):
-                        retrieve_dict = retrieval_node.to_dict()
-                        retrieval_metadata[
-                            f"{event_name}_document_{retrieved_document_counter}_score"
-                        ] = retrieval_node.score
-                        retrieval_metadata[
-                            f"{event_name}_document_{retrieved_document_counter}_filename"
-                        ] = retrieve_dict["node"]["metadata"]["file_name"]
-                        retrieval_metadata[
-                            f"{event_name}_document_{retrieved_document_counter}_text"
-                        ] = retrieve_dict["node"]["text"]
-                        retrieval_metadata[
-                            f"{event_name}_document_{retrieved_document_counter}_start_character"
-                        ] = retrieve_dict["node"]["start_char_idx"]
-                        retrieval_metadata[
-                            f"{event_name}_document_{retrieved_document_counter}_end_character"
-                        ] = retrieve_dict["node"]["end_char_idx"]
-                        retrieved_document_counter += 1
-                        if retrieved_document_counter > self.number_of_retrievals:
-                            break
+        data_to_log["query_time"] = _get_time_diff(query_start_time, query_end_time)
 
-            metadata_to_log = {}
-
-            for keys in data_to_log.keys():
-                if keys == "query_time" or keys == "agent_step_time":
-                    metadata_to_log["total_time"] = data_to_log[keys]
-                elif keys.endswith("_time"):
-                    metadata_to_log[keys] = data_to_log[keys]
-                elif keys != "query" and keys != "response":
-                    metadata_to_log[keys] = data_to_log[keys]
-
-            if len(number_of_components_used) > 0:
-                for key, value in number_of_components_used.items():
-                    metadata_to_log[f"number_of_{key}_used"] = value + 1
-
-            metadata_to_log.update(retrieval_metadata)
-
-            tree_structure = self._create_tree_structure(events_trace_map, data_to_log)
-            tree = self._create_svg(tree_structure)
-
-            fields = {
-                "prompt": data_to_log["query"],
-                "response": data_to_log["response"],
-                "time-details": tree,
-            }
-
-            if self.number_of_retrievals > 0:
-                for key, value in list(retrieval_metadata.items()):
-                    if key.endswith("_text"):
-                        fields[f"retrieved_document_{key[-6]}"] = (
-                            f"DOCUMENT SCORE: {retrieval_metadata[key[:-5]+'_score']}\n\n"
-                            + value
-                        )
-                        del metadata_to_log[key]
-
-            self.dataset.add_records(
-                records=[
-                    {"fields": fields, "metadata": metadata_to_log},
-                ]
-            )
+        return data_to_log
 
     def _create_tree_structure(
         self, events_trace_map: Dict[str, List[str]], data_to_log: Dict[str, Any]
@@ -572,54 +533,8 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
                 current_row += 1
         return data
 
-    def _create_svg(self, data: List) -> str:
-        """
-        Create an SVG file from the data.
-
-        Args:
-            data (List): The data to create the SVG file from.
-
-        Returns:
-            str: The SVG file.
-        """
-
-        # changing only the box height changes all other values as well
-        # others can be adjusted individually if needed
-        box_height = 47
-        box_width = box_height * 8.65
-        row_constant = box_height + 7
-        indent_constant = 40
-        font_size_node_name = box_height * 0.4188
-        font_size_time = font_size_node_name - 4
-        text_centering = box_height * 0.6341
-        node_name_indent = box_height * 0.35
-        time_indent = box_height * 7.15
-
-        body = ""
-        for each in data:
-            row, indent, node_name, node_time = each
-            body_raw = f"""
-<g transform="translate({indent*indent_constant}, {row*row_constant})">
-<rect x=".5" y=".5" width="{box_width}" height="{box_height}" rx="8.49" ry="8.49" style="fill: #24272e; stroke: #afdfe5; stroke-miterlimit: 10;"/>
-<text transform="translate({node_name_indent} {text_centering})" style="fill: #fff; font-size: {font_size_node_name}px;"><tspan x="0" y="0">{node_name}</tspan></text>
-<text transform="translate({time_indent} {text_centering})" style="fill: #b7d989; font-size: {font_size_time}px; font-style: italic;"><tspan x="0" y="0">{node_time}</tspan></text>
-</g>
-            """
-            body += body_raw
-            base = (
-                base
-            ) = f"""
-<?xml version="1.0" encoding="UTF-8"?>
-<svg id="Layer_1" data-name="Layer 1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 750 {len(data)*row_constant}">
-{body}
-</svg>
-            """
-            base = base.strip()
-        return base
-
-    # The four methods required by the abstrac class BaseCallbackHandler.
-    # These methods are the one being executed on the different events, by the llama-index
-    # BaseCallbackHandler class.
+    # The four methods required by the abstract class
+    # BaseCallbackHandler executed on the different events.
 
     def start_trace(self, trace_id: Optional[str] = None) -> None:
         """
@@ -654,7 +569,6 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
         self._trace_map = trace_map or defaultdict(list)
         self._end_time = datetime.now()
         self._create_root_and_other_nodes(trace_map)
-        self._add_missing_metadata_properties(self.dataset)
         self._extract_and_log_info(self.events_data, trace_map)
 
     def on_event_start(
