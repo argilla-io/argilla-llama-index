@@ -33,7 +33,7 @@ jobs:
         id: cache
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-python-${{ env.pythonLocation }}-${{ hashFiles('pyproject.toml') }}-test-v00
+          key: ${{ runner.os }}-python-${{ env.pythonLocation }}-${{ hashFiles('pyproject.toml') }}
 
       - name: Install `docker-compose` for local simulations
         uses: KengoTODA/actions-setup-docker-compose@v1
