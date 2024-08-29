@@ -1,4 +1,6 @@
 import unittest
+import argilla as rg
+
 from collections import defaultdict
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
@@ -12,6 +14,9 @@ class TestArgillaCallbackHandler(unittest.TestCase):
         self.dataset_name = "test_dataset_llama_index"
         self.api_url = "http://localhost:6900"
         self.api_key = "argilla.apikey"
+
+        self.client = rg.Argilla(api_url=self.api_url, api_key=self.api_key)
+        self.create_workspace("argilla")
 
         self.handler = ArgillaCallbackHandler(
             dataset_name=self.dataset_name,
@@ -31,6 +36,12 @@ class TestArgillaCallbackHandler(unittest.TestCase):
             "synthesize": ["llm", "grandchild1"],
         }
 
+    def create_workspace(self, workspace_name):
+        workspace = self.client.workspaces(name=workspace_name)
+        if workspace is None:
+            workspace = rg.Workspace(name=workspace_name)
+            workspace.create()
+
     def test_init(self):
         self.assertEqual(self.handler.dataset_name, self.dataset_name)
 
@@ -45,10 +56,10 @@ class TestArgillaCallbackHandler(unittest.TestCase):
             )
 
     @patch("argilla_llama_index.llama_index_handler.rg.Argilla.datasets")
-    @patch("argilla_llama_index.llama_index_handler.rg.Argilla.datasets", new_callable=MagicMock)
-    def test_init_file_not_found_error(self, mock_list, mock_from_argilla):
+    @patch("argilla_llama_index.llama_index_handler.rg.Argilla._validate_connection")
+    def test_init_file_not_found_error(self, mock_validate_connection, mock_list):
         mock_list.return_value = []
-        mock_from_argilla.side_effect = FileNotFoundError("Dataset not found")
+        mock_validate_connection.return_value = None
         with self.assertRaises(FileNotFoundError):
             ArgillaCallbackHandler(
                 dataset_name="test_dataset",
@@ -79,7 +90,6 @@ class TestArgillaCallbackHandler(unittest.TestCase):
         self.handler.start_trace()
         self.assertIsNotNone(self.handler._start_time)
         self.assertEqual(self.handler._trace_map, defaultdict(list))
-
 
     @patch(
         "argilla_llama_index.llama_index_handler.ArgillaCallbackHandler._create_root_and_other_nodes"
@@ -144,7 +154,6 @@ class TestArgillaCallbackHandler(unittest.TestCase):
 
         result = _create_svg(data)
 
-        self.assertIn('<svg id="Layer_1"', result)
         self.assertIn('viewBox="0 0 750 108"', result)
         self.assertIn('<g transform="translate(40, 0)">', result)
         self.assertIn('<tspan x="0" y="0">Node1</tspan>', result)

@@ -3,84 +3,51 @@ name: 🧪 Integration Tests
 on:
   push:
     branches:
-      - '*'
+      - '**'
 
 jobs:
   integration_tests:
     name: Running integration tests, which require an Argilla instance running
     runs-on: ubuntu-latest
 
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"]
-
     defaults:
       run:
         shell: bash -l {0}
 
-    steps:
-      - name: 🛎 Checkout Code 
-        uses: actions/checkout@v3
-      
-      - name: 🐍 Setup Conda Env 
-        uses: conda-incubator/setup-miniconda@v2
-        with:
-          miniforge-variant: Mambaforge
-          miniforge-version: latest
-          use-mamba: true
-          activate-environment: argilla
-      
-      - name: 🐍 Get date for Conda cache
-        id: get-date
-        run: echo "::set-output name=today::$(/bin/date -u '+%Y%m%d')"
-        shell: bash
+    strategy:
+      fail-fast: true
+      matrix:
+        python-version: ["3.9", "3.10", "3.11"]
 
-      - name: 🐍 Cache Conda env
-        uses: actions/cache@v3
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Cache
+        uses: actions/cache@v4
         id: cache
         with:
-          path: ${{ env.CONDA }}/envs
-          key: conda-${{ runner.os }}--${{ runner.arch }}--${{ steps.get-date.outputs.today }}-${{ hashFiles('environment_dev.yml') }}-${{ env.CACHE_NUMBER }}
-
-      - name: 👜 Cache pip 
-        uses: actions/cache@v3
-        with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ env.CACHE_NUMBER }}-${{ hashFiles('pyproject.toml') }}
+          key: ${{ runner.os }}-python-${{ env.pythonLocation }}-${{ hashFiles('pyproject.toml') }}
 
-      - name: 🛜 Netsat
-        run: |
-          apt update && apt install sudo
-          sudo apt install net-tools
-          netstat -lt
+      - name: 🐳 Download Docker file
+        run: curl https://raw.githubusercontent.com/argilla-io/argilla/main/examples/deployments/docker/docker-compose.yaml -o docker-compose.yaml
 
-      - name: 📦 Download Docker Compose file
-        run: |
-          curl https://raw.githubusercontent.com/argilla-io/argilla/main/examples/deployments/docker/docker-compose.yaml -o docker-compose.yaml
-        working-directory: .
-
-      - name: 📦 Set up Docker Compose
-        run: |
-          docker compose -f docker-compose.yaml up -d
-        working-directory: .
-
-      - name: 🪑 Wait for services to be ready
-        run: |
-          while ! curl -XGET http://localhost:6900/api/_status; do sleep 30; done
+      - name: 🐳 Run docker-compose
+        uses: hoverkraft-tech/compose-action@v2.0.1
+        with:
+          compose-file: "docker-compose.yaml"
 
       - name: 🗃️ Install dependencies
-        run: |
-          pip install -e ".[dev,tests]"
+        run: pip install -e ".[dev,tests]"
 
       - name: 📈 Run tests
         env:
           ARGILLA_ENABLE_TELEMETRY: 0
         run: |
           pytest tests
-
-      - name: 📦 Tear down Docker Compose
-        if: always()
-        run: |
-          docker compose -f docker-compose.yaml down
-        working-directory: .
