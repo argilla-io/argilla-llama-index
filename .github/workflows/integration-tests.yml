@@ -35,12 +35,6 @@ jobs:
           path: ~/.cache/pip
           key: ${{ runner.os }}-python-${{ env.pythonLocation }}-${{ hashFiles('pyproject.toml') }}
 
-      - name: Install `docker-compose` for local simulations
-        uses: KengoTODA/actions-setup-docker-compose@v1
-        if: ${{ env.ACT }}
-        with:
-          version: '2.14.2'
-
       - name: 🐳 Download Docker file
         run: curl https://raw.githubusercontent.com/argilla-io/argilla/main/examples/deployments/docker/docker-compose.yaml -o docker-compose.yaml
 
