@@ -45,7 +45,9 @@ jobs:
         run: curl https://raw.githubusercontent.com/argilla-io/argilla/main/examples/deployments/docker/docker-compose.yaml -o docker-compose.yaml
 
       - name: 🐳 Run docker-compose
-        run : docker-compose -f "docker-compose.yaml" up -d --build
+        uses: hoverkraft-tech/compose-action@v2.0.1
+        with:
+          compose-file: "docker-compose.yaml"
 
       - name: 🗃️ Install dependencies
         if: steps.cache.outputs.cache-hit != 'true'
