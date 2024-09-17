@@ -18,8 +18,7 @@ classifiers = [
 ]
 dependencies = [
     "argilla >= 2.0.0, < 3.0.0",
-    "llama-index >= 0.10.0, < 1.0",
-    "llama-index-callbacks-argilla >= 0.1.4",
+    "llama-index >= 0.10.20, < 1.0",
     "markdown >= 3.6.0",
     "packaging >= 23.2",
     "typing-extensions >= 4.3.0",
