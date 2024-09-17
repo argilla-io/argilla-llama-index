@@ -22,7 +22,7 @@ If you already have deployed Argilla, you can skip this step. Otherwise, you can
 
 ## Basic Usage
 
-To easily log your data into Argilla within your LlamaIndex workflow, you only need a simple step. Just call the Argilla global handler for Llama Index before starting production with your LLM.
+To easily log your data into Argilla within your LlamaIndex workflow, you only need to initialize the span handler and attach it to the Llama Index dispatcher. This ensured that the predictions obtained using Llama Index are automatically logged to the Argilla instance.
 
 - `dataset_name`: The name of the dataset. If the dataset does not exist, it will be created with the specified name. Otherwise, it will be updated.
 - `api_url`: The URL to connect to the Argilla instance.
@@ -33,20 +33,20 @@ To easily log your data into Argilla within your LlamaIndex workflow, you only n
 > For more information about the credentials, check the documentation for [users](https://docs.argilla.io/latest/how_to_guides/user/) and [workspaces](https://docs.argilla.io/latest/how_to_guides/workspace/).
 
 ```python
-from llama_index.core import set_global_handler
+import llama_index.core.instrumentation as instrument
+from argilla_llama_index import ArgillaSpanHandler
 
-set_global_handler(
-    "argilla",
-    dataset_name="query_model",
+span_handler = ArgillaSpanHandler(
+    dataset_name="query_llama_index",
     api_url="http://localhost:6900",
     api_key="argilla.apikey",
     number_of_retrievals=2,
 )
+
+dispatcher = instrument.get_dispatcher().add_span_handler(span_handler)
 ```
 
 Let's log some data into Argilla. With the code below, you can create a basic LlamaIndex workflow. We will use GPT3.5 from OpenAI as our LLM ([OpenAI API key](https://openai.com/blog/openai-api)). Moreover, we will use an example `.txt` file obtained from the [Llama Index documentation](https://docs.llamaindex.ai/en/stable/getting_started/starter_example.html).
-
-
 
 ```python
 import os 
@@ -63,8 +63,8 @@ Settings.llm = OpenAI(
 documents = SimpleDirectoryReader("data").load_data()
 index = VectorStoreIndex.from_documents(documents)
 
-# Create the query engine
-query_engine = index.as_query_engine()
+# Create the query engine with the same similarity top k as the number of retrievals
+query_engine = index.as_query_engine(similarity_top_k=2)
 ```
 
 Now, let's run the `query_engine` to have a response from the model. The generated response will be logged into Argilla.
