@@ -1,61 +1,76 @@
-"""
-Auxiliary methods for the Argilla Llama Index integration.
-"""
+#  Copyright 2021-present, the Recognai S.L. team.
+#
+#  Licensed under the Apache License, Version 2.0 (the "License");
+#  you may not use this file except in compliance with the License.
+#  You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
 
-from datetime import datetime
-from typing import Dict, List
+from typing import Any, Dict, List, Tuple
 
-from llama_index.core.callbacks.schema import CBEvent
 
-def _get_time_diff(event_1_time_str: str, event_2_time_str: str) -> float:
+def _create_tree_structure(trace_buffer: List[Dict[str, Any]]) -> List[Tuple]:
     """
-    Get the time difference between two events Follows the American format (month, day, year).
+    Create a tree structure from the trace buffer using the parent_id.
 
     Args:
-        event_1_time_str (str): The first event time.
-        event_2_time_str (str): The second event time.
+        trace_buffer (List[Dict[str, Any]]): The trace buffer to create the tree structure from.
 
     Returns:
-        float: The time difference between the two events.
+        List[Tuple]: The formatted tree structure as a list of tuples.
     """
-    time_format = "%m/%d/%Y, %H:%M:%S.%f"
+    nodes = []
 
-    event_1_time = datetime.strptime(event_1_time_str, time_format)
-    event_2_time = datetime.strptime(event_2_time_str, time_format)
+    node_dict = {item["id_"]: item.copy() for item in trace_buffer}
 
-    return round((event_2_time - event_1_time).total_seconds(), 4)
+    for node in node_dict.values():
+        node["children"] = []
 
-def _calc_time(events_data: Dict[str, List[CBEvent]], id: str) -> float:
-    """
-    Calculate the time difference between the start and end of an event using the events_data.
+    for node in node_dict.values():
+        parent_id = node["parent_id"]
+        if parent_id and parent_id in node_dict:
+            node_dict[parent_id]["children"].append(node)
 
-    Args:
-        events_data (Dict[str, List[CBEvent]]): The events data, stored in a dictionary.
-        id (str): The event id to calculate the time difference between start and finish timestamps.
+    def build_tree(node, depth=0):
+        node_name = node["id_"].split(".")[0]
+        node_time = node["duration"]
 
-    Returns:
-        float: The time difference between the start and end of the event.
-    """
+        row = len(nodes)
+        nodes.append((row, depth, node_name, node_time))
 
-    start_time = events_data[id][0].time
-    end_time = events_data[id][1].time
-    return _get_time_diff(start_time, end_time)
+        for child in node.get("children", []):
+            build_tree(child, depth + 1)
+
+    root_nodes = [
+        node
+        for node in node_dict.values()
+        if node["parent_id"] is None or node["parent_id"] not in node_dict
+    ]
+    for root in root_nodes:
+        build_tree(root)
+
+    return nodes
 
 
-def _create_svg(data: List) -> str:
+def _create_svg(data: List[Tuple]) -> str:
     """
     Create an SVG file from the data.
 
     Args:
-        data (List): The data to create the SVG file from.
+        data (List[Tuple]): The data to create the SVG file from.
 
     Returns:
         str: The SVG file.
     """
-
     svg_template = """
 <g transform="translate({x}, {y})">
-    <rect x=".5" y=".5" width="{width}" height="47" rx="8.49" ry="8.49" style="fill: #24272e; stroke: #afdfe5; stroke-miterlimit: 10;"/>
+    <rect x=".5" y=".5" width="{width}" height="40" rx="8.49" ry="8.49" style="fill: #24272e; stroke: #afdfe5; stroke-miterlimit: 10;"/>
     <text transform="translate({node_name_indent} {text_centering})" style="fill: #fff; font-size: {font_size_node_name}px;">
         <tspan x="0" y="0">{node_name}</tspan>
     </text>
@@ -66,21 +81,21 @@ def _create_svg(data: List) -> str:
 
     body = "".join(
         svg_template.format(
-            x=indent * 40,
-            y=row * 54,
-            width=47 * 8.65,  # 47 is the height of the box
-            node_name_indent=47 * 0.35,
-            text_centering=47 * 0.6341,
-            font_size_node_name=47 * 0.4188,
+            x=indent * 30,
+            y=row * 45,
+            width=40 * 8,  # 40 is the height of the box
+            node_name_indent=40 * 0.35,
+            text_centering=40 * 0.6341,
+            font_size_node_name=40 * 0.4188,
             node_name=node_name,
-            time_indent=47 * 7.15,
-            font_size_time=47 * 0.4188 - 4,
+            time_indent=40 * 6.5,
+            font_size_time=40 * 0.4188 - 4,
             node_time=node_time,
         )
         for row, indent, node_name, node_time in data
     )
 
     return f"""<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 750 {len(data) * 54}">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 750 {len(data) * 45}">
 {body}
 </svg>"""
