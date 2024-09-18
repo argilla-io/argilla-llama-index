@@ -23,7 +23,7 @@ from argilla import (
     Argilla,
     Workspace,
 )
-from argilla_llama_index.llama_index_handler import ArgillaSpanHandler
+from argilla_llama_index.llama_index_handler import ArgillaHandler
 from llama_index.core.base.base_query_engine import BaseQueryEngine
 from llama_index.core.instrumentation.span.simple import SimpleSpan
 
@@ -53,7 +53,7 @@ class TestArgillaSpanHandlerLogToArgilla(unittest.TestCase):
         self.client = Argilla(api_url=self.api_url, api_key=self.api_key)
         self._create_workspace("argilla")
 
-        self.handler = ArgillaSpanHandler(
+        self.handler = ArgillaHandler(
             dataset_name=self.dataset_name,
             api_url=self.api_url,
             api_key=self.api_key,
@@ -126,7 +126,7 @@ class TestArgillaSpanHandlerLogToArgilla(unittest.TestCase):
         )
 
     @patch("argilla_llama_index.llama_index_handler.Argilla")
-    @patch.object(ArgillaSpanHandler, "_initialize_dataset")
+    @patch.object(ArgillaHandler, "_initialize_dataset")
     def test_initialization(self, mock_initialize_dataset, mock_argilla):
         dataset_name = "test_dataset"
         api_url = "http://example.com"
@@ -134,7 +134,7 @@ class TestArgillaSpanHandlerLogToArgilla(unittest.TestCase):
         workspace_name = "test_workspace"
         number_of_retrievals = 5
 
-        handler = ArgillaSpanHandler(
+        handler = ArgillaHandler(
             dataset_name=dataset_name,
             api_url=api_url,
             api_key=api_key,
@@ -167,9 +167,7 @@ class TestArgillaSpanHandlerLogToArgilla(unittest.TestCase):
         self.assertEqual(span.parent_id, data.parent_span_id)
         self.assertEqual(span.tags, data.tags)
 
-    @patch.object(
-        ArgillaSpanHandler, "_parse_output", return_value={"parsed": "output"}
-    )
+    @patch.object(ArgillaHandler, "_parse_output", return_value={"parsed": "output"})
     def test_prepare_to_exit_span(self, mock_parse_output):
         data = self._create_common_data(id_="test_id", with_span=True)
         self.mock_context_root.get.return_value = (data.trace_id, data.root_span_id)

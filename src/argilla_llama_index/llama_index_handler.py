@@ -45,7 +45,7 @@ context_root: ContextVar[Union[Tuple[str, str], Tuple[None, None]]] = ContextVar
 )
 
 
-class ArgillaSpanHandler(BaseSpanHandler[SimpleSpan], extra="allow"):
+class ArgillaHandler(BaseSpanHandler[SimpleSpan], extra="allow"):
     """
     Span handler that logs predictions to Argilla.
 
@@ -69,9 +69,9 @@ class ArgillaSpanHandler(BaseSpanHandler[SimpleSpan], extra="allow"):
         from llama_index.core.retrievers import VectorIndexRetriever
         from llama_index.llms.openai import OpenAI
 
-        from argilla_llama_index import ArgillaSpanHandler
+        from argilla_llama_index import ArgillaHandler
 
-        span_handler = ArgillaSpanHandler(
+        span_handler = ArgillaHandler(
             dataset_name="query_model",
             api_url="http://localhost:6900",
             api_key="argilla.apikey",
@@ -246,7 +246,7 @@ class ArgillaSpanHandler(BaseSpanHandler[SimpleSpan], extra="allow"):
 
     def class_name(cls) -> str:
         """Class name."""
-        return "ArgillaSpanHandler"
+        return "ArgillaHandler"
 
     def new_span(
         self,

@@ -14,6 +14,6 @@
 
 __version__ = "2.1.0"
 
-from argilla_llama_index.llama_index_handler import ArgillaSpanHandler
+from argilla_llama_index.llama_index_handler import ArgillaHandler
 
-__all__ = ["ArgillaSpanHandler"]
+__all__ = ["ArgillaHandler"]

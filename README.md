@@ -34,9 +34,9 @@ To easily log your data into Argilla within your LlamaIndex workflow, you only n
 
 ```python
 import llama_index.core.instrumentation as instrument
-from argilla_llama_index import ArgillaSpanHandler
+from argilla_llama_index import ArgillaHandler
 
-span_handler = ArgillaSpanHandler(
+span_handler = ArgillaHandler(
     dataset_name="query_llama_index",
     api_url="http://localhost:6900",
     api_key="argilla.apikey",
@@ -49,7 +49,7 @@ dispatcher = instrument.get_dispatcher().add_span_handler(span_handler)
 Let's log some data into Argilla. With the code below, you can create a basic LlamaIndex workflow. We will use GPT3.5 from OpenAI as our LLM ([OpenAI API key](https://openai.com/blog/openai-api)). Moreover, we will use an example `.txt` file obtained from the [Llama Index documentation](https://docs.llamaindex.ai/en/stable/getting_started/starter_example.html).
 
 ```python
-import os 
+import os
 
 from llama_index.core import Settings, VectorStoreIndex, SimpleDirectoryReader
 from llama_index.llms.openai import OpenAI
