@@ -263,7 +263,7 @@ class ArgillaSpanHandler(BaseSpanHandler[SimpleSpan], extra="allow"):
         Args:
             id_ (str): The unique identifier for the new span.
             bound_args (inspect.BoundArguments): The arguments that were bound to when the span was created.
-            instance (Optional[Any], optional): The instance associated with the span, if applicable.. Defaults to None.
+            instance (Optional[Any], optional): The instance associated with the span, if present. Defaults to None.
             parent_span_id (Optional[str], optional): The identifier of the parent span. Defaults to None.
             tags (Optional[Dict[str, Any]], optional): Additional information about the span. Defaults to None.
 
