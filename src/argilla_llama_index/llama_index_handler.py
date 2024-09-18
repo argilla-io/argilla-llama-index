@@ -58,7 +58,7 @@ class ArgillaHandler(BaseSpanHandler[SimpleSpan], extra="allow"):
         dataset_name (str): The name of the Argilla dataset.
         api_url (str): Argilla API URL.
         api_key (str): Argilla API key.
-        number_of_retrievals (int): The number of retrievals to log. By default, it is set to 0.
+        number_of_retrievals (int): The number of retrievals to log. By default, it is set to 2.
         workspace_name (str): The name of the Argilla workspace. By default, it will use the first available workspace.
 
     Usage:
@@ -96,12 +96,17 @@ class ArgillaHandler(BaseSpanHandler[SimpleSpan], extra="allow"):
         api_url: str,
         api_key: str,
         workspace_name: Optional[str] = None,
-        number_of_retrievals: int = 0,
+        number_of_retrievals: int = 2,
     ):
         super().__init__()
 
         self.dataset_name = dataset_name
         self.workspace_name = workspace_name
+
+        if number_of_retrievals < 0:
+            raise ValueError(
+                "The number of retrievals must be 0 (to show no retrieved documents) or a positive number."
+            )
         self.number_of_retrievals = number_of_retrievals
 
         if (api_url is None and os.getenv("ARGILLA_API_URL") is None) or (
