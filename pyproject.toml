@@ -17,7 +17,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
 ]
 dependencies = [
-    "argilla >= 2.0.0, < 3.0.0",
+    "argilla >= 2.2.0, < 3.0.0",
     "llama-index >= 0.10.20, < 1.0",
     "markdown >= 3.6.0",
     "packaging >= 23.2",
