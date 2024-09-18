@@ -237,7 +237,7 @@ class ArgillaSpanHandler(BaseSpanHandler[SimpleSpan], extra="allow"):
                 name=f"rating_retrieved_document_{doc + 1}",
                 title=f"Rate the relevance of the Retrieved document {doc + 1}, if present.",
                 values=list(range(1, 8)),
-                description=f"Rate the relevance of the retrieved document {doc + 1}, if applicable.",
+                description=f"Rate the relevance of the retrieved document {doc + 1}, if present.",
                 required=False,
             )
             for doc in range(number_of_retrievals)
