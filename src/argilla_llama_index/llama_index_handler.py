@@ -211,7 +211,7 @@ class ArgillaHandler(BaseSpanHandler[SimpleSpan], extra="allow"):
                 f"as an `integration` issue."
             ) from e
 
-        supported_context_fields = [
+        supported_context_fields = ["retrieved_document_scores"] + [
             f"retrieved_document_{i+1}" for i in range(self.number_of_retrievals)
         ]
         supported_fields = ["chat"] + supported_context_fields + ["time-details"]
@@ -224,6 +224,14 @@ class ArgillaHandler(BaseSpanHandler[SimpleSpan], extra="allow"):
 
     def _add_context_fields(self, number_of_retrievals: int) -> List[Any]:
         """Create the context fields to be added to the dataset."""
+        context_scores = [
+            TextField(
+                name="retrieved_document_scores",
+                title="Retrieved document scores",
+                use_markdown=True,
+                required=False,
+            )
+        ]
         context_fields = [
             TextField(
                 name=f"retrieved_document_{doc+1}",
@@ -233,7 +241,7 @@ class ArgillaHandler(BaseSpanHandler[SimpleSpan], extra="allow"):
             )
             for doc in range(number_of_retrievals)
         ]
-        return context_fields
+        return context_scores + context_fields
 
     def _add_context_questions(self, number_of_retrievals: int) -> List[Any]:
         """Create the context questions to be added to the dataset."""
@@ -403,7 +411,14 @@ class ArgillaHandler(BaseSpanHandler[SimpleSpan], extra="allow"):
             "time-details": tree,
         }
         if self.number_of_retrievals > 0:
+            score_keys = filter(lambda k: k.endswith("_score"), fields_info.keys())
             text_keys = filter(lambda k: k.endswith("_text"), fields_info.keys())
+
+            scores = "\n".join(
+                f"{key.replace('_score', '').replace('_', ' ').capitalize()}: {fields_info[key]}"
+                for key in islice(score_keys, self.number_of_retrievals)
+            )
+            fields["retrieved_document_scores"] = scores
 
             for key in islice(text_keys, self.number_of_retrievals):
                 idx = key.split("_")[-2]
@@ -454,9 +469,8 @@ class ArgillaHandler(BaseSpanHandler[SimpleSpan], extra="allow"):
                 text = getattr(n, "text", "")
                 score = getattr(n, "score", 0)
                 out_metadata[f"retrieved_document_{i+1}_score"] = score
-                self.fields_info[
-                    f"retrieved_document_{i+1}_text"
-                ] = f"DOCUMENT SCORE: {score}\n\n{text}"
+                self.fields_info[f"retrieved_document_{i+1}_score"] = score
+                self.fields_info[f"retrieved_document_{i+1}_text"] = text
         return out_metadata
 
     def _process_metadata(self, trace_buffer: List[Dict[str, Any]]) -> Dict[str, Any]:

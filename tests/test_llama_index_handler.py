@@ -295,11 +295,11 @@ class TestArgillaSpanHandlerLogToArgilla(unittest.TestCase):
         self.assertEqual(out_metadata, expected_metadata)
         self.assertEqual(
             self.handler.fields_info["retrieved_document_1_text"],
-            "DOCUMENT SCORE: 0\n\nDocument 1 text",
+            "Document 1 text",
         )
         self.assertEqual(
             self.handler.fields_info["retrieved_document_2_text"],
-            "DOCUMENT SCORE: 0.8\n\nDocument 2 text",
+            "Document 2 text",
         )
 
     @patch("argilla_llama_index.llama_index_handler.TermsMetadataProperty")
