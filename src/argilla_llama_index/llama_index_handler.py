@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union, cast
 
 from argilla import (
     Argilla,
+    ChatField,
     Dataset,
     FloatMetadataProperty,
     IntegerMetadataProperty,
@@ -33,7 +34,8 @@ from argilla import (
     TextField,
     TextQuestion,
 )
-from argilla.markdown import chat_to_html
+
+# from argilla.markdown import chat_to_html
 from llama_index.core.base.base_query_engine import BaseQueryEngine
 from llama_index.core.instrumentation.span.simple import SimpleSpan
 from llama_index.core.instrumentation.span_handlers import BaseSpanHandler
@@ -128,12 +130,13 @@ class ArgillaHandler(BaseSpanHandler[SimpleSpan], extra="allow"):
 
         self.settings = Settings(
             fields=[
-                TextField(name="chat", title="Chat", use_markdown=True, required=True),
-                # ChatField(name="chat", title="Chat", use_markdown=True, required=True), # TODO: Use ChatField when available.
+                ChatField(name="chat", title="Chat", use_markdown=False, required=True),
             ]
             + self._add_context_fields(self.number_of_retrievals)
             + [
-                TextField(name="time-details", title="Time Details", use_markdown=True),
+                TextField(
+                    name="time-details", title="Time Details", use_markdown=False
+                ),
             ],
             questions=[
                 RatingQuestion(
@@ -407,7 +410,7 @@ class ArgillaHandler(BaseSpanHandler[SimpleSpan], extra="allow"):
         tree = _create_svg(tree_structure)
 
         fields = {
-            "chat": chat_to_html(message),
+            "chat": message,
             "time-details": tree,
         }
         if self.number_of_retrievals > 0:
@@ -495,11 +498,12 @@ class ArgillaHandler(BaseSpanHandler[SimpleSpan], extra="allow"):
 
     def _add_metadata_properties(self, metadata: Dict[str, Any]) -> None:
         """Add metadata properties to the dataset if they do not exist."""
+        existing_metadata = [
+            existing_metadata.name
+            for existing_metadata in self.dataset.settings.metadata
+        ]
         for mt in metadata.keys():
-            if mt not in [
-                existing_metadata.name
-                for existing_metadata in self.dataset.settings.metadata
-            ]:
+            if mt not in existing_metadata:
                 if isinstance(metadata[mt], str):
                     self.dataset.settings.metadata.add(TermsMetadataProperty(name=mt))
 
