@@ -195,10 +195,7 @@ class TestArgillaSpanHandlerLogToArgilla(unittest.TestCase):
 
     @patch("argilla_llama_index.llama_index_handler._create_tree_structure")
     @patch("argilla_llama_index.llama_index_handler._create_svg")
-    @patch("argilla_llama_index.llama_index_handler.chat_to_html")
-    def test_log_to_argilla(
-        self, mock_chat_to_html, mock_create_svg, mock_create_tree_structure
-    ):
+    def test_log_to_argilla(self, mock_create_svg, mock_create_tree_structure):
         data = self._create_common_data()
         trace_buffer = [
             {
@@ -217,7 +214,6 @@ class TestArgillaSpanHandlerLogToArgilla(unittest.TestCase):
             "retrieved_document_1_text": "doc1",
             "retrieved_document_2_text": "doc2",
         }
-        mock_chat_to_html.return_value = "chat_html"
         mock_create_tree_structure.return_value = "tree_structure"
         mock_create_svg.return_value = "svg_tree"
 
