@@ -19,12 +19,13 @@ from argilla_llama_index.helpers import _create_svg, _create_tree_structure
 
 class TestHelpers(unittest.TestCase):
     def test_create_tree_structure(self):
-        input_data = [
+        span_data = [
             {"id_": "A", "parent_id": None, "duration": "10s"},
             {"id_": "B", "parent_id": "A", "duration": "15s"},
             {"id_": "C", "parent_id": "A", "duration": "5s"},
             {"id_": "D", "parent_id": "B", "duration": "20s"},
         ]
+        event_data = []
         expected_output = [
             (0, 0, "A", "10s"),
             (1, 1, "B", "15s"),
@@ -32,7 +33,7 @@ class TestHelpers(unittest.TestCase):
             (3, 1, "C", "5s"),
         ]
 
-        result = _create_tree_structure(input_data)
+        result = _create_tree_structure(span_data, event_data)
         self.assertEqual(result, expected_output)
 
     def test_create_svg(self):
