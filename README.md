@@ -22,7 +22,7 @@ If you already have deployed Argilla, you can skip this step. Otherwise, you can
 
 ## Basic Usage
 
-To easily log your data into Argilla within your LlamaIndex workflow, you only need to initialize the span handler and attach it to the Llama Index dispatcher. This ensured that the predictions obtained using Llama Index are automatically logged to the Argilla instance.
+To easily log your data into Argilla within your LlamaIndex workflow, you only need to initialize the handler and attach it to the LlamaIndex dispatcher. This ensured that the predictions obtained using LlamaIndex are automatically logged to the Argilla instance.
 
 - `dataset_name`: The name of the dataset. If the dataset does not exist, it will be created with the specified name. Otherwise, it will be updated.
 - `api_url`: The URL to connect to the Argilla instance.
@@ -33,20 +33,21 @@ To easily log your data into Argilla within your LlamaIndex workflow, you only n
 > For more information about the credentials, check the documentation for [users](https://docs.argilla.io/latest/how_to_guides/user/) and [workspaces](https://docs.argilla.io/latest/how_to_guides/workspace/).
 
 ```python
-import llama_index.core.instrumentation as instrument
+from llama_index.core.instrumentation import get_dispatcher
 from argilla_llama_index import ArgillaHandler
 
-span_handler = ArgillaHandler(
+argilla_handler = ArgillaHandler(
     dataset_name="query_llama_index",
     api_url="http://localhost:6900",
     api_key="argilla.apikey",
     number_of_retrievals=2,
 )
-
-dispatcher = instrument.get_dispatcher().add_span_handler(span_handler)
+root_dispatcher = get_dispatcher()
+root_dispatcher.add_span_handler(argilla_handler)
+root_dispatcher.add_event_handler(argilla_handler)
 ```
 
-Let's log some data into Argilla. With the code below, you can create a basic LlamaIndex workflow. We will use GPT3.5 from OpenAI as our LLM ([OpenAI API key](https://openai.com/blog/openai-api)). Moreover, we will use an example `.txt` file obtained from the [Llama Index documentation](https://docs.llamaindex.ai/en/stable/getting_started/starter_example.html).
+Let's log some data into Argilla. With the code below, you can create a basic LlamaIndex workflow. We will use GPT3.5 from OpenAI as our LLM ([OpenAI API key](https://openai.com/blog/openai-api)). Moreover, we will use an example `.txt` file obtained from the [LlamaIndex documentation](https://docs.llamaindex.ai/en/stable/getting_started/starter_example.html).
 
 ```python
 import os
