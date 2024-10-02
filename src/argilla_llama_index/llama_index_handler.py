@@ -34,9 +34,40 @@ from argilla import (
     TextField,
     TextQuestion,
 )
-
-# from argilla.markdown import chat_to_html
-from llama_index.core.base.base_query_engine import BaseQueryEngine
+from llama_index.core.instrumentation.event_handlers import BaseEventHandler
+from llama_index.core.instrumentation.events import BaseEvent
+from llama_index.core.instrumentation.events.agent import (
+    AgentChatWithStepEndEvent,
+    AgentChatWithStepStartEvent,
+)
+from llama_index.core.instrumentation.events.embedding import (
+    EmbeddingStartEvent,
+)
+from llama_index.core.instrumentation.events.llm import (
+    LLMChatInProgressEvent,
+    LLMChatStartEvent,
+    LLMCompletionEndEvent,
+    LLMCompletionStartEvent,
+    LLMPredictEndEvent,
+    LLMStructuredPredictEndEvent,
+)
+from llama_index.core.instrumentation.events.query import (
+    QueryEndEvent,
+    QueryStartEvent,
+)
+from llama_index.core.instrumentation.events.rerank import (
+    ReRankEndEvent,
+    ReRankStartEvent,
+)
+from llama_index.core.instrumentation.events.retrieval import (
+    RetrievalEndEvent,
+    RetrievalStartEvent,
+)
+from llama_index.core.instrumentation.events.synthesis import (
+    GetResponseStartEvent,
+    SynthesizeEndEvent,
+    SynthesizeStartEvent,
+)
 from llama_index.core.instrumentation.span.simple import SimpleSpan
 from llama_index.core.instrumentation.span_handlers import BaseSpanHandler
 
@@ -47,9 +78,9 @@ context_root: ContextVar[Union[Tuple[str, str], Tuple[None, None]]] = ContextVar
 )
 
 
-class ArgillaHandler(BaseSpanHandler[SimpleSpan], extra="allow"):
+class ArgillaHandler(BaseSpanHandler[SimpleSpan], BaseEventHandler, extra="allow"):
     """
-    Span handler that logs predictions to Argilla.
+    Handler that logs predictions to Argilla.
 
     This handler automatically logs the predictions made with LlamaIndex to Argilla,
     without the need to create a dataset and log the predictions manually. Events relevant
@@ -66,21 +97,22 @@ class ArgillaHandler(BaseSpanHandler[SimpleSpan], extra="allow"):
     Usage:
         ```python
         from llama_index.core import Settings, VectorStoreIndex, SimpleDirectoryReader
-        import llama_index.core.instrumentation as instrument
         from llama_index.core.query_engine import RetrieverQueryEngine
+        from llama_index.core.instrumentation import get_dispatcher
         from llama_index.core.retrievers import VectorIndexRetriever
         from llama_index.llms.openai import OpenAI
 
         from argilla_llama_index import ArgillaHandler
 
-        span_handler = ArgillaHandler(
-            dataset_name="query_model",
+        argilla_handler = ArgillaHandler(
+            dataset_name="query_llama_index",
             api_url="http://localhost:6900",
             api_key="argilla.apikey",
             number_of_retrievals=2,
         )
-
-        dispatcher = instrument.get_dispatcher().add_span_handler(span_handler)
+        root_dispatcher = get_dispatcher()
+        root_dispatcher.add_span_handler(argilla_handler)
+        root_dispatcher.add_event_handler(argilla_handler)
 
         Settings.llm = OpenAI(model="gpt-3.5-turbo", temperature=0.8, openai_api_key=os.getenv("OPENAI_API_KEY"))
 
@@ -120,7 +152,8 @@ class ArgillaHandler(BaseSpanHandler[SimpleSpan], extra="allow"):
             )
         self.client = Argilla(api_key=api_key, api_url=api_url)
 
-        self.trace_buffer: List[SimpleSpan] = []
+        self.span_buffer: List[Dict[str, Any]] = []
+        self.event_buffer: List[Dict[str, Any]] = []
         self.fields_info: Dict[str, Any] = {}
 
         self._initialize_dataset()
@@ -264,6 +297,93 @@ class ArgillaHandler(BaseSpanHandler[SimpleSpan], extra="allow"):
         """Class name."""
         return "ArgillaHandler"
 
+    def handle(self, event: BaseEvent) -> None:
+        """
+        Logic to handle different events.
+
+        Args:
+            event (BaseEvent): The event to be handled.
+
+        Returns:
+            None
+        """
+        metadata = {}
+
+        query_events = {
+            QueryStartEvent: "query",
+            AgentChatWithStepStartEvent: "user_msg",
+            RetrievalStartEvent: "str_or_query_bundle",
+            ReRankStartEvent: "query",
+            GetResponseStartEvent: "query_str",
+            SynthesizeStartEvent: "query",
+            LLMCompletionStartEvent: "prompt",
+            LLMChatInProgressEvent: "messages",
+        }
+
+        response_events = {
+            QueryEndEvent: "response",
+            AgentChatWithStepEndEvent: "response",
+            LLMPredictEndEvent: "output",
+            LLMStructuredPredictEndEvent: "output",
+            LLMCompletionEndEvent: "response",
+            SynthesizeEndEvent: "response",
+            LLMChatInProgressEvent: "response",
+        }
+
+        event_type = type(event)
+
+        if event_type in query_events:
+            if "query" not in self.fields_info:
+                self.fields_info["query"] = str(
+                    getattr(event, query_events[event_type])
+                )
+            if event_type == ReRankStartEvent:
+                metadata["reranker_model"] = event.model_name
+
+        if event_type in response_events:
+            self.fields_info["response"] = str(
+                getattr(event, response_events[event_type])
+            )
+
+        if isinstance(event, EmbeddingStartEvent):
+            metadata["embedding_model"] = event.model_dict.get("model_name", "")
+
+        if isinstance(event, LLMChatStartEvent):
+            metadata.update(
+                {
+                    "llm_model": event.model_dict.get("model", ""),
+                    "llm_temperature": event.model_dict.get("temperature", 0),
+                    "llm_max_tokens": event.model_dict.get("max_tokens", 0),
+                }
+            )
+
+        if isinstance(event, (RetrievalEndEvent, ReRankEndEvent)):
+            for i, n in enumerate(event.nodes, start=1):
+                idx = f"retrieved_document_{i}"
+                metadata.update(
+                    {
+                        f"{idx}_file_name": n.metadata.get("file_name", "unknown"),
+                        f"{idx}_file_type": n.metadata.get("file_type", "unknown"),
+                        f"{idx}_file_size": n.metadata.get("file_size", 0),
+                        f"{idx}_start_char": getattr(n.node, "start_char_idx", -1),
+                        f"{idx}_end_char": getattr(n.node, "end_char_idx", -1),
+                        f"{idx}_score": getattr(n, "score", 0),
+                    }
+                )
+                text = getattr(n, "text", "")
+                self.fields_info[f"{idx}_score"] = metadata[f"{idx}_score"]
+                self.fields_info[f"{idx}_text"] = text
+
+        self.event_buffer.append(
+            {
+                "id_": event.id_,
+                "event_type": event.class_name(),
+                "span_id": event.span_id,
+                "timestamp": event.timestamp.timestamp(),
+                "metadata": metadata,
+            }
+        )
+
     def new_span(
         self,
         id_: str,
@@ -292,6 +412,11 @@ class ArgillaHandler(BaseSpanHandler[SimpleSpan], extra="allow"):
             trace_id = str(uuid.uuid4())
             root_span_id = id_
             context_root.set((trace_id, root_span_id))
+
+        if "workflow.run" in id_.lower():
+            self.fields_info["query"] = bound_args.kwargs["query"]
+        if "workflow._done" in id_.lower():
+            self.fields_info["response"] = bound_args.kwargs["response"]
 
         return SimpleSpan(id_=id_, parent_id=parent_span_id, tags=tags or {})
 
@@ -324,37 +449,41 @@ class ArgillaHandler(BaseSpanHandler[SimpleSpan], extra="allow"):
         span = cast(SimpleSpan, span)
         span.end_time = datetime.now()
         span.duration = round((span.end_time - span.start_time).total_seconds(), 4)
-        span.metadata = self._parse_output(instance, bound_args, result)
 
-        self.trace_buffer.append(
+        self.span_buffer.append(
             {
                 "id_": span.id_,
                 "parent_id": span.parent_id,
                 "start_time": span.start_time.timestamp(),
                 "end_time": span.end_time.timestamp(),
                 "duration": span.duration,
-                "metadata": span.metadata,
             }
         )
+
+        with self.lock:
+            self.completed_spans += [span]
 
         if id_ == root_span_id and any(
             term.lower() in id_.lower() for term in ["AgentRunner", "QueryEngine"]
         ):
             self._log_to_argilla(
                 trace_id=trace_id,
-                trace_buffer=self.trace_buffer,
+                span_buffer=self.span_buffer,
+                event_buffer=self.event_buffer,
                 fields_info=self.fields_info,
             )
-            self.trace_buffer.clear()
+            self.span_buffer.clear()
+            self.event_buffer.clear()
             self.fields_info.clear()
             context_root.set((None, None))
-        elif id_ == root_span_id:
-            self.trace_buffer.clear()
+        elif id_ == root_span_id and not any(
+            term.lower() in id_.lower() for term in ["Workflow.run", "Workflow._done"]
+        ):
+            self.span_buffer.clear()
+            self.event_buffer.clear()
             self.fields_info.clear()
             context_root.set((None, None))
 
-        with self.lock:
-            self.completed_spans += [span]
         return span
 
     def prepare_to_drop_span(
@@ -381,32 +510,45 @@ class ArgillaHandler(BaseSpanHandler[SimpleSpan], extra="allow"):
         if not trace_id:
             return None
 
-        if id_ == root_span_id:
-            self.trace_buffer.clear()
-            self.fields_info.clear()
-            context_root.set((None, None))
-
         if id_ in self.open_spans:
             with self.lock:
                 span = self.open_spans[id_]
                 self.dropped_spans += [span]
+
+        if "workflow.run" in root_span_id.lower():
+            self._log_to_argilla(
+                trace_id=trace_id,
+                span_buffer=self.span_buffer,
+                event_buffer=self.event_buffer,
+                fields_info=self.fields_info,
+            )
+            self.span_buffer.clear()
+            self.event_buffer.clear()
+            self.fields_info.clear()
+            context_root.set((None, None))
+
+        if id_ == root_span_id:
+            self.span_buffer.clear()
+            self.event_buffer.clear()
+            self.fields_info.clear()
+            context_root.set((None, None))
+
         return None
 
     def _log_to_argilla(
         self,
         trace_id: str,
-        trace_buffer: List[Dict[str, Any]],
+        span_buffer: List[Dict[str, Any]],
+        event_buffer: List[Dict[str, Any]],
         fields_info: Dict[str, Any],
     ) -> None:
         """Logs the data in the trace buffer to Argilla."""
-        if not trace_buffer:
-            return None
 
         message = [
             {"role": "user", "content": fields_info["query"]},
             {"role": "assistant", "content": fields_info["response"]},
         ]
-        tree_structure = _create_tree_structure(trace_buffer)
+        tree_structure = _create_tree_structure(span_buffer, event_buffer)
         tree = _create_svg(tree_structure)
 
         fields = {
@@ -427,72 +569,35 @@ class ArgillaHandler(BaseSpanHandler[SimpleSpan], extra="allow"):
                 idx = key.split("_")[-2]
                 fields[f"retrieved_document_{idx}"] = fields_info[key]
 
-        metadata = self._process_metadata(trace_buffer)
+        metadata = self._process_metadata(span_buffer, event_buffer)
         self._add_metadata_properties(metadata)
 
         records = [Record(id=trace_id, fields=fields, metadata=metadata)]
         self.dataset.records.log(records=records)
 
-    def _parse_output(
-        self,
-        instance: Optional[Any],
-        bound_args: inspect.BoundArguments,
-        result: Optional[Any],
+    def _process_metadata(
+        self, span_buffer: List[Dict[str, Any]], event_buffer: List[Dict[str, Any]]
     ) -> Dict[str, Any]:
-        """Parse the output of the span to extract metadata."""
-        out_metadata = {}
-
-        if isinstance(instance, BaseQueryEngine):
-            if message := bound_args.arguments.get("message"):
-                self.fields_info["query"] = message
-            elif query_bundle := bound_args.arguments.get("query_bundle"):
-                self.fields_info["query"] = query_bundle.query_str
-            self.fields_info["response"] = result.response
-
-        if nodes := bound_args.arguments.get("nodes"):
-            for i, n in enumerate(nodes):
-                out_metadata[f"retrieved_document_{i+1}_file_name"] = n.metadata.get(
-                    "file_name", "unknown"
-                )
-                out_metadata[f"retrieved_document_{i+1}_file_type"] = n.metadata.get(
-                    "file_type", "unknown"
-                )
-                out_metadata[f"retrieved_document_{i+1}_file_size"] = n.metadata.get(
-                    "file_size", 0
-                )
-
-                node = getattr(n, "node", None)
-                out_metadata[f"retrieved_document_{i+1}_start_char"] = getattr(
-                    node, "start_char_idx", -1
-                )
-                out_metadata[f"retrieved_document_{i+1}_end_char"] = getattr(
-                    node, "end_char_idx", -1
-                )
-
-                text = getattr(n, "text", "")
-                score = getattr(n, "score", 0)
-                out_metadata[f"retrieved_document_{i+1}_score"] = score
-                self.fields_info[f"retrieved_document_{i+1}_score"] = score
-                self.fields_info[f"retrieved_document_{i+1}_text"] = text
-        return out_metadata
-
-    def _process_metadata(self, trace_buffer: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Process the metadata to be logged to Argilla."""
         metadata_to_log = {}
 
-        for span in trace_buffer:
+        for span in span_buffer:
             key_prefix = span["id_"].split(".")[0].lower()
-
             metadata_to_log[f"{key_prefix}_start_time"] = span["start_time"]
             metadata_to_log[f"{key_prefix}_end_time"] = span["end_time"]
             metadata_to_log[f"{key_prefix}_duration"] = span["duration"]
-            if span["metadata"]:
-                metadata_to_log.update(span["metadata"])
+
+        for event in event_buffer:
+            key_prefix = event["event_type"].lower()
+            metadata_to_log[f"{key_prefix}_timestamp"] = event["timestamp"]
+            if event["metadata"]:
+                metadata_to_log.update(event["metadata"])
 
         metadata_to_log["total_duration"] = sum(
-            span["duration"] for span in trace_buffer
+            span["duration"] for span in span_buffer
         )
-        metadata_to_log["total_spans"] = len(trace_buffer)
+        metadata_to_log["total_spans"] = len(span_buffer)
+        metadata_to_log["total_events"] = len(event_buffer)
 
         return metadata_to_log
 
