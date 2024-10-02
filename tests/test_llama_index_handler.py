@@ -61,7 +61,8 @@ class TestArgillaSpanHandlerLogToArgilla(unittest.TestCase):
             number_of_retrievals=self.number_of_retrievals,
         )
         self.handler.open_spans = {}
-        self.handler.trace_buffer = []
+        self.handler.span_buffer = []
+        self.handler.event_buffer = []
         self.handler.fields_info = {}
         self.handler.completed_spans = []
         self.handler.dropped_spans = []
@@ -145,7 +146,8 @@ class TestArgillaSpanHandlerLogToArgilla(unittest.TestCase):
         self.assertEqual(handler.dataset_name, dataset_name)
         self.assertEqual(handler.workspace_name, workspace_name)
         self.assertEqual(handler.number_of_retrievals, number_of_retrievals)
-        self.assertEqual(handler.trace_buffer, [])
+        self.assertEqual(handler.span_buffer, [])
+        self.assertEqual(handler.event_buffer, [])
         self.assertEqual(handler.fields_info, {})
         self.assertIsInstance(handler.client, MagicMock)
         mock_initialize_dataset.assert_called_once()
@@ -167,8 +169,7 @@ class TestArgillaSpanHandlerLogToArgilla(unittest.TestCase):
         self.assertEqual(span.parent_id, data.parent_span_id)
         self.assertEqual(span.tags, data.tags)
 
-    @patch.object(ArgillaHandler, "_parse_output", return_value={"parsed": "output"})
-    def test_prepare_to_exit_span(self, mock_parse_output):
+    def test_prepare_to_exit_span(self):
         data = self._create_common_data(id_="test_id", with_span=True)
         self.mock_context_root.get.return_value = (data.trace_id, data.root_span_id)
         self.handler.open_spans[data.id_] = data.span
@@ -177,8 +178,7 @@ class TestArgillaSpanHandlerLogToArgilla(unittest.TestCase):
 
         self.assertIsNotNone(data.span.end_time)
         self.assertAlmostEqual(data.span.duration, 5, delta=0.1)
-        self.assertEqual(data.span.metadata, {"parsed": "output"})
-        self.assertEqual(len(self.handler.trace_buffer), 1)
+        self.assertEqual(len(self.handler.span_buffer), 1)
         self.assertIn(data.span, self.handler.completed_spans)
 
     def test_prepare_to_drop_span(self):
@@ -188,7 +188,8 @@ class TestArgillaSpanHandlerLogToArgilla(unittest.TestCase):
 
         self.handler.prepare_to_drop_span(id_=data.id_, bound_args=data.bound_args)
 
-        self.assertEqual(self.handler.trace_buffer, [])
+        self.assertEqual(self.handler.span_buffer, [])
+        self.assertEqual(self.handler.event_buffer, [])
         self.assertEqual(self.handler.fields_info, {})
         self.mock_context_root.set.assert_called_once_with((None, None))
         self.assertIn(data.span, self.handler.dropped_spans)
@@ -197,7 +198,7 @@ class TestArgillaSpanHandlerLogToArgilla(unittest.TestCase):
     @patch("argilla_llama_index.llama_index_handler._create_svg")
     def test_log_to_argilla(self, mock_create_svg, mock_create_tree_structure):
         data = self._create_common_data()
-        trace_buffer = [
+        span_buffer = [
             {
                 "id_": "span_1",
                 "parent_id": None,
@@ -205,6 +206,14 @@ class TestArgillaSpanHandlerLogToArgilla(unittest.TestCase):
                 "start_time": 0,
                 "end_time": 1,
                 "duration": 1,
+            }
+        ]
+        event_buffer = [
+            {
+                "id-": "event_1",
+                "span_id": "span_1",
+                "timestamp": 1,
+                "event_type": "test_event",
                 "metadata": {},
             }
         ]
@@ -218,7 +227,10 @@ class TestArgillaSpanHandlerLogToArgilla(unittest.TestCase):
         mock_create_svg.return_value = "svg_tree"
 
         self.handler._log_to_argilla(
-            trace_id=data.trace_id, trace_buffer=trace_buffer, fields_info=fields_info
+            trace_id=data.trace_id,
+            span_buffer=span_buffer,
+            event_buffer=event_buffer,
+            fields_info=fields_info,
         )
 
         self.handler.dataset.records.log.assert_called_once()
@@ -230,73 +242,6 @@ class TestArgillaSpanHandlerLogToArgilla(unittest.TestCase):
         for i in range(1, self.number_of_retrievals + 1):
             self.assertIn(f"retrieved_document_{i}", records[0].fields)
         self.assertNotIn("retrieved_document_3", records[0].fields)
-
-    def test_parse_output_query_engine(self):
-        data = self._create_common_data(with_instance=True, with_result=True)
-
-        out_metadata = self.handler._parse_output(
-            instance=data.instance, bound_args=data.bound_args, result=data.result
-        )
-
-        self.assertEqual(
-            self.handler.fields_info["query"], data.bound_args.arguments["message"]
-        )
-        self.assertEqual(self.handler.fields_info["response"], data.result.response)
-        self.assertEqual(out_metadata, {})
-
-    def test_parse_output_nodes(self):
-        node1 = Mock(spec=["metadata", "node", "text"])
-        node1.metadata = {
-            "file_name": "file1.txt",
-            "file_size": 123,
-        }
-        node1.node = Mock(spec=["start_char_idx", "end_char_idx"])
-        node1.node.start_char_idx = 0
-        node1.node.end_char_idx = 50
-        node1.text = "Document 1 text"
-
-        node2 = Mock(spec=["metadata", "node", "text", "score"])
-        node2.metadata = {
-            "file_name": "file2.txt",
-            "file_type": "text",
-            "file_size": 456,
-        }
-        node2.score = 0.8
-        node2.node = Mock(spec=[])
-        node2.text = "Document 2 text"
-
-        data = self._create_common_data(
-            with_instance=True, with_result=True, arguments={"nodes": [node1, node2]}
-        )
-
-        out_metadata = self.handler._parse_output(
-            instance=data.instance, bound_args=data.bound_args, result=data.result
-        )
-
-        expected_metadata = {
-            "retrieved_document_1_file_name": "file1.txt",
-            "retrieved_document_1_file_type": "unknown",
-            "retrieved_document_1_file_size": 123,
-            "retrieved_document_1_score": 0,
-            "retrieved_document_1_start_char": 0,
-            "retrieved_document_1_end_char": 50,
-            "retrieved_document_2_file_name": "file2.txt",
-            "retrieved_document_2_file_type": "text",
-            "retrieved_document_2_file_size": 456,
-            "retrieved_document_2_score": 0.8,
-            "retrieved_document_2_start_char": -1,
-            "retrieved_document_2_end_char": -1,
-        }
-
-        self.assertEqual(out_metadata, expected_metadata)
-        self.assertEqual(
-            self.handler.fields_info["retrieved_document_1_text"],
-            "Document 1 text",
-        )
-        self.assertEqual(
-            self.handler.fields_info["retrieved_document_2_text"],
-            "Document 2 text",
-        )
 
     @patch("argilla_llama_index.llama_index_handler.TermsMetadataProperty")
     @patch("argilla_llama_index.llama_index_handler.IntegerMetadataProperty")
