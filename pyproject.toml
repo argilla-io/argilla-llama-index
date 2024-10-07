@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "argilla-llama-index"
-description = "Argilla-Llama Index Integration"
+description = "Argilla-LlamaIndex Integration"
 readme = "README.md"
 requires-python = ">=3.8"
 license = "MIT"
@@ -17,9 +17,8 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
 ]
 dependencies = [
-    "argilla >= 2.0.0, < 3.0.0",
-    "llama-index >= 0.10.0, < 1.0",
-    "llama-index-callbacks-argilla >= 0.1.4",
+    "argilla >= 2.2.0, < 3.0.0",
+    "llama-index >= 0.10.20, < 1.0",
     "markdown >= 3.6.0",
     "packaging >= 23.2",
     "typing-extensions >= 4.3.0",

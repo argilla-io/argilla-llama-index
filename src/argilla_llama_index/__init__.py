@@ -1,4 +1,4 @@
-# Copyright 2023-present, Argilla, Inc.
+# Copyright 2024-present, Argilla, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 
-from argilla_llama_index.llama_index_handler import ArgillaCallbackHandler
+from argilla_llama_index.llama_index_handler import ArgillaHandler
 
-__all__ = ["ArgillaCallbackHandler"]
+__all__ = ["ArgillaHandler"]

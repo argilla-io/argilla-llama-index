@@ -1,25 +1,86 @@
+# Copyright 2024-present, Argilla, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import inspect
 import logging
 import os
-from collections import defaultdict
+import uuid
+from contextvars import ContextVar
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from itertools import islice
+from typing import Any, Dict, List, Optional, Tuple, Union, cast
 
-import argilla as rg
-from argilla.markdown import chat_to_html
-from llama_index.core.callbacks.base_handler import BaseCallbackHandler
-from llama_index.core.callbacks.schema import (
-    CBEvent,
-    CBEventType,
-    EventPayload,
+from argilla import (
+    Argilla,
+    ChatField,
+    Dataset,
+    FloatMetadataProperty,
+    IntegerMetadataProperty,
+    RatingQuestion,
+    Record,
+    Settings,
+    TermsMetadataProperty,
+    TextField,
+    TextQuestion,
 )
-from packaging.version import parse
+from llama_index.core.instrumentation.event_handlers import BaseEventHandler
+from llama_index.core.instrumentation.events import BaseEvent
+from llama_index.core.instrumentation.events.agent import (
+    AgentChatWithStepEndEvent,
+    AgentChatWithStepStartEvent,
+)
+from llama_index.core.instrumentation.events.embedding import (
+    EmbeddingStartEvent,
+)
+from llama_index.core.instrumentation.events.llm import (
+    LLMChatInProgressEvent,
+    LLMChatStartEvent,
+    LLMCompletionEndEvent,
+    LLMCompletionStartEvent,
+    LLMPredictEndEvent,
+    LLMStructuredPredictEndEvent,
+)
+from llama_index.core.instrumentation.events.query import (
+    QueryEndEvent,
+    QueryStartEvent,
+)
+from llama_index.core.instrumentation.events.rerank import (
+    ReRankEndEvent,
+    ReRankStartEvent,
+)
+from llama_index.core.instrumentation.events.retrieval import (
+    RetrievalEndEvent,
+    RetrievalStartEvent,
+)
+from llama_index.core.instrumentation.events.synthesis import (
+    GetResponseStartEvent,
+    SynthesizeEndEvent,
+    SynthesizeStartEvent,
+)
+from llama_index.core.instrumentation.span.simple import SimpleSpan
+from llama_index.core.instrumentation.span_handlers import BaseSpanHandler
 
-from argilla_llama_index.helpers import _calc_time, _create_svg, _get_time_diff
+from argilla_llama_index.helpers import _create_svg, _create_tree_structure
+
+context_root: ContextVar[Union[Tuple[str, str], Tuple[None, None]]] = ContextVar(
+    "context_root", default=(None, None)
+)
 
 
-class ArgillaCallbackHandler(BaseCallbackHandler):
+class ArgillaHandler(BaseSpanHandler[SimpleSpan], BaseEventHandler, extra="allow"):
     """
-    Callback handler that logs predictions to Argilla.
+    Handler that logs predictions to Argilla.
 
     This handler automatically logs the predictions made with LlamaIndex to Argilla,
     without the need to create a dataset and log the predictions manually. Events relevant
@@ -30,73 +91,57 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
         dataset_name (str): The name of the Argilla dataset.
         api_url (str): Argilla API URL.
         api_key (str): Argilla API key.
-        number_of_retrievals (int): The number of retrievals to log. By default, it is set to 0.
+        number_of_retrievals (int): The number of retrievals to log. By default, it is set to 2.
         workspace_name (str): The name of the Argilla workspace. By default, it will use the first available workspace.
-        event_starts_to_ignore (List[CBEventType]): List of event types to ignore at the start of the trace.
-        event_ends_to_ignore (List[CBEventType]): List of event types to ignore at the end of the trace.
-        handlers (List[BaseCallbackHandler]): List of extra handlers to include.
-
-    Methods:
-        start_trace(trace_id: Optional[str] = None) -> None:
-            Logic to be executed at the beginning of the tracing process.
-
-        end_trace(trace_id: Optional[str] = None, trace_map: Optional[Dict[str, List[str]]] = None) -> None:
-            Logic to be executed at the end of the tracing process.
-
-        on_event_start(event_type: CBEventType, payload: Optional[Dict[str, Any]] = None, event_id: Optional[str] = None, parent_id: str = None) -> str:
-            Store event start data by event type. Executed at the start of an event.
-
-        on_event_end(event_type: CBEventType, payload: Optional[Dict[str, Any]] = None, event_id: str = None) -> None:
-            Store event end data by event type. Executed at the end of an event.
 
     Usage:
-    ```python
-    from llama_index.core import Settings, VectorStoreIndex, SimpleDirectoryReader, set_global_handler
-    from llama_index.core.query_engine import RetrieverQueryEngine
-    from llama_index.core.retrievers import VectorIndexRetriever
-    from llama_index.llms.openai import OpenAI
+        ```python
+        from llama_index.core import Settings, VectorStoreIndex, SimpleDirectoryReader
+        from llama_index.core.query_engine import RetrieverQueryEngine
+        from llama_index.core.instrumentation import get_dispatcher
+        from llama_index.core.retrievers import VectorIndexRetriever
+        from llama_index.llms.openai import OpenAI
 
-    set_global_handler("argilla",
-        api_url="http://localhost:6900",
-        api_key="argilla.apikey",
-        dataset_name="query_model",
-        number_of_retrievals=2
-    )
+        from argilla_llama_index import ArgillaHandler
 
-    Settings.llm = OpenAI(model="gpt-3.5-turbo", temperature=0.8, openai_api_key=os.getenv("OPENAI_API_KEY"))
+        argilla_handler = ArgillaHandler(
+            dataset_name="query_llama_index",
+            api_url="http://localhost:6900",
+            api_key="argilla.apikey",
+            number_of_retrievals=2,
+        )
+        root_dispatcher = get_dispatcher()
+        root_dispatcher.add_span_handler(argilla_handler)
+        root_dispatcher.add_event_handler(argilla_handler)
 
-    documents = SimpleDirectoryReader("../../data").load_data()
-    index = VectorStoreIndex.from_documents(documents)
-    query_engine = index.as_query_engine()
+        Settings.llm = OpenAI(model="gpt-3.5-turbo", temperature=0.8, openai_api_key=os.getenv("OPENAI_API_KEY"))
 
-    response = query_engine.query("What did the author do growing up?")
-    ```
+        documents = SimpleDirectoryReader("../../data").load_data()
+        index = VectorStoreIndex.from_documents(documents)
+        query_engine = index.as_query_engine(similarity_top_k=2)
+
+        response = query_engine.query("What did the author do growing up?")
+        ```
     """
 
-    def __init__(  # noqa: C901
+    def __init__(
         self,
         dataset_name: str,
-        api_url: Optional[str] = None,
-        api_key: Optional[str] = None,
-        number_of_retrievals: int = 0,
+        api_url: str,
+        api_key: str,
         workspace_name: Optional[str] = None,
-        event_starts_to_ignore: Optional[List[CBEventType]] = None,
-        event_ends_to_ignore: Optional[List[CBEventType]] = None,
-        handlers: Optional[List[BaseCallbackHandler]] = None,
-    ) -> None:
-        self.event_starts_to_ignore = event_starts_to_ignore or []
-        self.event_ends_to_ignore = event_ends_to_ignore or []
-        self.handlers = handlers or []
-        self.number_of_retrievals = number_of_retrievals
+        number_of_retrievals: int = 2,
+    ):
+        super().__init__()
 
-        self.ARGILLA_VERSION = rg.__version__
+        self.dataset_name = dataset_name
+        self.workspace_name = workspace_name
 
-        if parse(self.ARGILLA_VERSION) < parse("2.0.0"):
-            raise ImportError(
-                f"The installed `argilla` version is {self.ARGILLA_VERSION} but "
-                "`ArgillaCallbackHandler` requires at least version 2.0.0. Please "
-                "upgrade `argilla` with `pip install --upgrade argilla`."
+        if number_of_retrievals < 0:
+            raise ValueError(
+                "The number of retrievals must be 0 (to show no retrieved documents) or a positive number."
             )
+        self.number_of_retrievals = number_of_retrievals
 
         if (api_url is None and os.getenv("ARGILLA_API_URL") is None) or (
             api_key is None and os.getenv("ARGILLA_API_KEY") is None
@@ -105,72 +150,73 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
                 "Both `api_url` and `api_key` must be set. The current values are: "
                 f"`api_url`={api_url} and `api_key`={api_key}."
             )
+        self.client = Argilla(api_key=api_key, api_url=api_url)
 
-        client = rg.Argilla(api_key=api_key, api_url=api_url)
+        self.span_buffer: List[Dict[str, Any]] = []
+        self.event_buffer: List[Dict[str, Any]] = []
+        self.fields_info: Dict[str, Any] = {}
 
-        self.dataset_name = dataset_name
-        self.workspace_name = workspace_name
-        self.settings = rg.Settings(
+        self._initialize_dataset()
+
+    def _initialize_dataset(self):
+        """Create the dataset in Argilla if it does not exist, or update it if it does."""
+
+        self.settings = Settings(
             fields=[
-                rg.TextField(
-                    name="chat", title="Chat", use_markdown=True, required=True
-                ),
-                rg.TextField(
-                    name="time-details", title="Time Details", use_markdown=True
-                ),
+                ChatField(name="chat", title="Chat", use_markdown=False, required=True),
             ]
-            + self._add_context_fields(number_of_retrievals),
+            + self._add_context_fields(self.number_of_retrievals)
+            + [
+                TextField(
+                    name="time-details", title="Time Details", use_markdown=False
+                ),
+            ],
             questions=[
-                rg.RatingQuestion(
+                RatingQuestion(
                     name="response-rating",
                     title="Rating for the response",
                     description="How would you rate the quality of the response?",
                     values=[1, 2, 3, 4, 5, 6, 7],
                     required=True,
                 ),
-                rg.TextQuestion(
+                TextQuestion(
                     name="response-feedback",
                     title="Feedback for the response",
                     description="What feedback do you have for the response?",
                     required=False,
                 ),
             ]
-            + self._add_context_questions(number_of_retrievals),
+            + self._add_context_questions(self.number_of_retrievals),
             guidelines="You're asked to rate the quality of the response and provide feedback.",
             allow_extra_metadata=True,
         )
 
         # Either create a new dataset or use an existing one, updating it if necessary
         try:
-            dataset_names = [ds.name for ds in client.datasets]
-
+            dataset_names = [ds.name for ds in self.client.datasets]
             if self.dataset_name not in dataset_names:
-                dataset = rg.Dataset(
+                dataset = Dataset(
                     name=self.dataset_name,
                     workspace=self.workspace_name,
                     settings=self.settings,
                 )
                 self.dataset = dataset.create()
-                self.is_new_dataset_created = True
                 logging.info(
                     f"A new dataset with the name '{self.dataset_name}' has been created.",
                 )
-
             else:
                 # Update the existing dataset. If the fields and questions do not match,
                 # a new dataset will be created with the -updated flag in the name.
-                self.dataset = client.datasets(
+                self.dataset = self.client.datasets(
                     name=self.dataset_name,
                     workspace=self.workspace_name,
                 )
-                self.is_new_dataset_created = False
-
-                if number_of_retrievals > 0:
+                if self.number_of_retrievals > 0:
                     required_context_fields = self._add_context_fields(
-                        number_of_retrievals
+                        self.number_of_retrievals
                     )
                     required_context_questions = self._add_context_questions(
-                        number_of_retrievals
+                        self.number_of_retrievals
                     )
                     existing_fields = list(self.dataset.fields)
                     existing_questions = list(self.dataset.questions)
@@ -185,13 +231,15 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
                             for element in required_context_questions
                         )
                     ):
-                        self.dataset = rg.Dataset(
+                        self.dataset = Dataset(
                             name=f"{self.dataset_name}-updated",
                             workspace=self.workspace_name,
                             settings=self.settings,
                         )
                         self.dataset = self.dataset.create()
-
+                        logging.info(
+                            f"A new dataset with the name '{self.dataset_name}-updated' has been created.",
+                        )
         except Exception as e:
             raise FileNotFoundError(
                 f"`Dataset` creation or update failed with exception `{e}`."
@@ -199,10 +247,10 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
                 f"as an `integration` issue."
             ) from e
 
-        supported_context_fields = [
-            f"retrieved_document_{i+1}" for i in range(number_of_retrievals)
+        supported_context_fields = ["retrieved_document_scores"] + [
+            f"retrieved_document_{i+1}" for i in range(self.number_of_retrievals)
         ]
-        supported_fields = ["chat", "time-details"] + supported_context_fields
+        supported_fields = ["chat"] + supported_context_fields + ["time-details"]
         if supported_fields != [field.name for field in self.dataset.fields]:
             raise ValueError(
                 f"`Dataset` with name={self.dataset_name} had fields that are not supported"
@@ -210,406 +258,364 @@ class ArgillaCallbackHandler(BaseCallbackHandler):
                 f" Current fields are {[field.name for field in self.dataset.fields]}."
             )
 
-        self.events_data: Dict[str, List[CBEvent]] = defaultdict(list)
-        self.event_map_id_to_name = {}
-        self._ignore_components_in_tree = ["templating"]
-        self.components_to_log = set()
-        self.event_ids_traced = set()
-
     def _add_context_fields(self, number_of_retrievals: int) -> List[Any]:
         """Create the context fields to be added to the dataset."""
+        context_scores = [
+            TextField(
+                name="retrieved_document_scores",
+                title="Retrieved document scores",
+                use_markdown=True,
+                required=False,
+            )
+        ]
         context_fields = [
-            rg.TextField(
-                name=f"retrieved_document_{doc + 1}",
-                title=f"Retrieved document {doc + 1}",
+            TextField(
+                name=f"retrieved_document_{doc+1}",
+                title=f"Retrieved document {doc+1}",
                 use_markdown=True,
                 required=False,
             )
             for doc in range(number_of_retrievals)
         ]
-        return context_fields
+        return context_scores + context_fields
 
     def _add_context_questions(self, number_of_retrievals: int) -> List[Any]:
         """Create the context questions to be added to the dataset."""
         rating_questions = [
-            rg.RatingQuestion(
+            RatingQuestion(
                 name=f"rating_retrieved_document_{doc + 1}",
-                title=f"Rate the relevance of the Retrieved document {doc + 1} (if present)",
+                title=f"Rate the relevance of the Retrieved document {doc + 1}, if present.",
                 values=list(range(1, 8)),
-                description=f"Rate the relevance of the retrieved document {doc + 1}.",
+                description=f"Rate the relevance of the retrieved document {doc + 1}, if present.",
                 required=False,
             )
             for doc in range(number_of_retrievals)
         ]
         return rating_questions
 
-    def _create_root_and_other_nodes(self, trace_map: Dict[str, List[str]]) -> None:
-        """Create the root node and the other nodes in the tree."""
-        self.root_node = self._get_event_name_by_id(trace_map["root"][0])
-        self.event_ids_traced = set(trace_map.keys()) - {"root"}
-        self.event_ids_traced.update(*trace_map.values())
-        for id in self.event_ids_traced:
-            self.components_to_log.add(self._get_event_name_by_id(id))
+    def class_name(cls) -> str:
+        """Class name."""
+        return "ArgillaHandler"
 
-    def _get_event_name_by_id(self, event_id: str) -> str:
-        """Get the name of the event by its id."""
-        return str(self.events_data[event_id][0].event_type).split(".")[1].lower()
-
-        # TODO: If we have a component more than once, properties currently don't account for those after the first one and get overwritten
-
-    def _add_missing_metadata(
-        self,
-        dataset: rg.Dataset,
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        """Add missing metadata properties to the dataset."""
-
-        for mt in metadata.keys():
-            if mt not in [metadata.name for metadata in self.dataset.settings.metadata]:
-                if mt.endswith("_time"):
-                    self.dataset.settings.metadata.add(
-                        rg.FloatMetadataProperty(name=mt, title=mt)
-                    )
-                    dataset.update()
-
-    def _check_components_for_tree(
-        self, tree_structure_dict: Dict[str, List[str]]
-    ) -> Dict[str, List[str]]:
+    def handle(self, event: BaseEvent) -> None:
         """
-        Check whether the components in the tree are in the components to log.
-        Removes components that are not in the components to log so that they are not shown in the tree.
-        """
-        final_components_in_tree = self.components_to_log.copy()
-        final_components_in_tree.add("root")
-        for component in self._ignore_components_in_tree:
-            if component in final_components_in_tree:
-                final_components_in_tree.remove(component)
-        for key in list(tree_structure_dict.keys()):
-            if key.strip("0") not in final_components_in_tree:
-                del tree_structure_dict[key]
-        for key, value in tree_structure_dict.items():
-            if isinstance(value, list):
-                tree_structure_dict[key] = [
-                    element
-                    for element in value
-                    if element.strip("0") in final_components_in_tree
-                ]
-        return tree_structure_dict
-
-    def _get_events_map_with_names(
-        self, events_data: Dict[str, List[CBEvent]], trace_map: Dict[str, List[str]]
-    ) -> Dict[str, List[str]]:
-        """
-        Returns a dictionary where trace_map is mapped with the event names instead of the event ids.
-        Also returns a set of the event ids that were traced.
-        """
-        self.event_map_id_to_name = {}
-        for event_id in self.event_ids_traced:
-            event_name = str(events_data[event_id][0].event_type).split(".")[1].lower()
-            while event_name in self.event_map_id_to_name.values():
-                event_name = event_name + "0"
-            self.event_map_id_to_name[event_id] = event_name
-        events_trace_map = {
-            self.event_map_id_to_name.get(k, k): [
-                self.event_map_id_to_name.get(v, v) for v in values
-            ]
-            for k, values in trace_map.items()
-        }
-
-        return events_trace_map
-
-    def _extract_and_log_info(
-        self, events_data: Dict[str, List[CBEvent]], trace_map: Dict[str, List[str]]
-    ) -> None:
-        """
-        Main function that extracts the information from the events and logs it to Argilla.
-        We currently log data if the root node is either "agent_step" or "query".
-        Otherwise, we do not log anything.
-        If we want to account for more root nodes, we just need to add them to the if statement.
-        """
-        events_trace_map = self._get_events_map_with_names(events_data, trace_map)
-        root_node = trace_map.get("root")
-
-        if not root_node or len(root_node) != 1:
-            return
-
-        if self.root_node == "agent_step":
-            data_to_log = self._process_agent_step(events_data, root_node)
-        elif self.root_node == "query":
-            data_to_log = self._process_query(events_data, root_node)
-        else:
-            return
-
-        self.event_ids_traced.remove(root_node[0])
-        components_to_log = [
-            comp for comp in self.components_to_log if comp != self.root_node
-        ]
-        number_of_components_used = defaultdict(int)
-        retrieval_metadata = {}
-
-        for event_id in self.event_ids_traced:
-            event_name = self.event_map_id_to_name[event_id]
-            event_name_reduced = (
-                event_name.rstrip("0") if event_name.endswith("0") else event_name
-            )
-            number_of_components_used[event_name_reduced] += event_name.endswith("0")
-
-            if event_name_reduced in components_to_log:
-                data_to_log[f"{event_name}_time"] = _calc_time(events_data, event_id)
-
-            if event_name_reduced == "llm":
-                payload = events_data[event_id][0].payload
-                data_to_log.update(
-                    {
-                        f"{event_name}_system_prompt": payload.get(
-                            EventPayload.MESSAGES
-                        )[0].content,
-                        f"{event_name}_model_name": payload.get(
-                            EventPayload.SERIALIZED
-                        )["model"],
-                    }
-                )
-
-            if event_name_reduced == "retrieve":
-                for idx, retrieval_node in enumerate(
-                    events_data[event_id][1].payload.get(EventPayload.NODES), 1
-                ):
-                    if idx > self.number_of_retrievals:
-                        break
-                    retrieve_dict = retrieval_node.to_dict()
-                    retrieval_metadata.update(
-                        {
-                            f"{event_name}_document_{idx}_score": retrieval_node.score,
-                            f"{event_name}_document_{idx}_filename": retrieve_dict[
-                                "node"
-                            ]["metadata"]["file_name"],
-                            f"{event_name}_document_{idx}_text": retrieve_dict["node"][
-                                "text"
-                            ],
-                            f"{event_name}_document_{idx}_start_character": retrieve_dict[
-                                "node"
-                            ][
-                                "start_char_idx"
-                            ],
-                            f"{event_name}_document_{idx}_end_character": retrieve_dict[
-                                "node"
-                            ]["end_char_idx"],
-                        }
-                    )
-
-        metadata_to_log = {
-            key: data_to_log[key]
-            for key in data_to_log
-            if key.endswith("_time") or key not in ["query", "response"]
-        }
-        metadata_to_log["total_time"] = data_to_log.get(
-            "query_time", data_to_log.get("agent_step_time")
-        )
-        metadata_to_log.update(
-            {
-                f"number_of_{key}_used": value + 1
-                for key, value in number_of_components_used.items()
-            }
-        )
-        metadata_to_log.update(retrieval_metadata)
-
-        self._add_missing_metadata(self.dataset, metadata_to_log)
-
-        tree_structure = self._create_tree_structure(events_trace_map, data_to_log)
-        tree = _create_svg(tree_structure)
-
-        message = [
-            {"role": "user", "content": data_to_log["query"]},
-            {"role": "assistant", "content": data_to_log["response"]},
-        ]
-        fields = {
-            "chat": chat_to_html(message),
-            "time-details": tree,
-        }
-
-        if self.number_of_retrievals > 0:
-            for key in list(retrieval_metadata.keys()):
-                if key.endswith("_text"):
-                    idx = key.split("_")[-2]
-                    fields[f"retrieved_document_{idx}"] = (
-                        f"DOCUMENT SCORE: {retrieval_metadata[f'{key[:-5]}_score']}\n\n{retrieval_metadata[key]}"
-                    )
-                    del metadata_to_log[key]
-
-        valid_metadata_keys = [
-            metadata.name for metadata in self.dataset.settings.metadata
-        ]
-        metadata_to_log = {
-            k: v
-            for k, v in metadata_to_log.items()
-            if k in valid_metadata_keys or not k.endswith("_time")
-        }
-
-        self.dataset.records.log(
-            records=[
-                rg.Record(
-                    fields=fields,
-                    metadata=metadata_to_log,
-                ),
-            ]
-        )
-
-    def _process_agent_step(
-        self, events_data: Dict[str, List[CBEvent]], root_node: str
-    ) -> Dict:
-        """
-        Processes events data for 'agent_step' root node.
-        """
-        data_to_log = {}
-
-        event_start = events_data[root_node[0]][0]
-        data_to_log["query"] = event_start.payload.get(EventPayload.MESSAGES)[0]
-        query_start_time = event_start.time
-
-        event_end = events_data[root_node[0]][1]
-        data_to_log["response"] = event_end.payload.get(EventPayload.RESPONSE).response
-        query_end_time = event_end.time
-
-        data_to_log["agent_step_time"] = _get_time_diff(
-            query_start_time, query_end_time
-        )
-
-        return data_to_log
-
-    def _process_query(
-        self, events_data: Dict[str, List[CBEvent]], root_node: str
-    ) -> Dict:
-        """
-        Processes events data for 'query' root node.
-        """
-        data_to_log = {}
-
-        event_start = events_data[root_node[0]][0]
-        data_to_log["query"] = event_start.payload.get(EventPayload.QUERY_STR)
-        query_start_time = event_start.time
-
-        event_end = events_data[root_node[0]][1]
-        data_to_log["response"] = event_end.payload.get(EventPayload.RESPONSE).response
-        query_end_time = event_end.time
-
-        data_to_log["query_time"] = _get_time_diff(query_start_time, query_end_time)
-
-        return data_to_log
-
-    def _create_tree_structure(
-        self, events_trace_map: Dict[str, List[str]], data_to_log: Dict[str, Any]
-    ) -> List:
-        """Create the tree data to be converted to an SVG."""
-        events_trace_map = self._check_components_for_tree(events_trace_map)
-        data = []
-        data.append(
-            (
-                0,
-                0,
-                self.root_node.strip("0").upper(),
-                data_to_log[f"{self.root_node}_time"],
-            )
-        )
-        current_row = 1
-        for root_child in events_trace_map[self.root_node]:
-            data.append(
-                (
-                    current_row,
-                    1,
-                    root_child.strip("0").upper(),
-                    data_to_log[f"{root_child}_time"],
-                )
-            )
-            current_row += 1
-            for child in events_trace_map[root_child]:
-                data.append(
-                    (
-                        current_row,
-                        2,
-                        child.strip("0").upper(),
-                        data_to_log[f"{child}_time"],
-                    )
-                )
-                current_row += 1
-        return data
-
-    # The four methods required by the abstract class
-    # BaseCallbackHandler executed on the different events.
-
-    def start_trace(self, trace_id: Optional[str] = None) -> None:
-        """
-        Start tracing events.
+        Logic to handle different events.
 
         Args:
-            trace_id (str, optional): The trace_id to start tracing.
-        """
-
-        self._trace_map = defaultdict(list)
-        self._cur_trace_id = trace_id
-        self._start_time = datetime.now()
-
-        # Clear the events and the components prior to running the query.
-        # They are usually events related to creating the docs and indexing.
-        self.events_data.clear()
-        self.components_to_log.clear()
-
-    def end_trace(
-        self,
-        trace_id: Optional[str] = None,
-        trace_map: Optional[Dict[str, List[str]]] = None,
-    ) -> None:
-        """
-        End tracing events.
-
-        Args:
-            trace_id (str, optional): The trace_id to end tracing.
-            trace_map (Dict[str, List[str]], optional): The trace_map to end. This map has been obtained from the parent class.
-        """
-
-        self._trace_map = trace_map or defaultdict(list)
-        self._end_time = datetime.now()
-        self._create_root_and_other_nodes(trace_map)
-        self._extract_and_log_info(self.events_data, trace_map)
-
-    def on_event_start(
-        self,
-        event_type: CBEventType,
-        payload: Optional[Dict[str, Any]] = None,
-        event_id: Optional[str] = None,
-        parent_id: str = None,
-    ) -> str:
-        """
-        Store event start data by event type. Executed at the start of an event.
-
-        Args:
-            event_type (CBEventType): The event type to store.
-            payload (Dict[str, Any], optional): The payload to store.
-            event_id (str, optional): The event id to store.
-            parent_id (str, optional): The parent id to store.
+            event (BaseEvent): The event to be handled.
 
         Returns:
-            str: The event id.
+            None
         """
+        metadata = {}
 
-        event = CBEvent(event_type, payload=payload, id_=event_id)
-        self.events_data[event_id].append(event)
+        query_events = {
+            QueryStartEvent: "query",
+            AgentChatWithStepStartEvent: "user_msg",
+            RetrievalStartEvent: "str_or_query_bundle",
+            ReRankStartEvent: "query",
+            GetResponseStartEvent: "query_str",
+            SynthesizeStartEvent: "query",
+            LLMCompletionStartEvent: "prompt",
+            LLMChatInProgressEvent: "messages",
+        }
 
-        return event.id_
+        response_events = {
+            QueryEndEvent: "response",
+            AgentChatWithStepEndEvent: "response",
+            LLMPredictEndEvent: "output",
+            LLMStructuredPredictEndEvent: "output",
+            LLMCompletionEndEvent: "response",
+            SynthesizeEndEvent: "response",
+            LLMChatInProgressEvent: "response",
+        }
 
-    def on_event_end(
+        event_type = type(event)
+
+        if event_type in query_events:
+            if "query" not in self.fields_info:
+                self.fields_info["query"] = str(
+                    getattr(event, query_events[event_type])
+                )
+            if event_type == ReRankStartEvent:
+                metadata["reranker_model"] = event.model_name
+
+        if event_type in response_events:
+            self.fields_info["response"] = str(
+                getattr(event, response_events[event_type])
+            )
+
+        if isinstance(event, EmbeddingStartEvent):
+            metadata["embedding_model"] = event.model_dict.get("model_name", "")
+
+        if isinstance(event, LLMChatStartEvent):
+            metadata.update(
+                {
+                    "llm_model": event.model_dict.get("model", ""),
+                    "llm_temperature": event.model_dict.get("temperature", 0),
+                    "llm_max_tokens": event.model_dict.get("max_tokens", 0),
+                }
+            )
+
+        if isinstance(event, (RetrievalEndEvent, ReRankEndEvent)):
+            for i, n in enumerate(event.nodes, start=1):
+                idx = f"retrieved_document_{i}"
+                metadata.update(
+                    {
+                        f"{idx}_file_name": n.metadata.get("file_name", "unknown"),
+                        f"{idx}_file_type": n.metadata.get("file_type", "unknown"),
+                        f"{idx}_file_size": n.metadata.get("file_size", 0),
+                        f"{idx}_start_char": getattr(n.node, "start_char_idx", -1),
+                        f"{idx}_end_char": getattr(n.node, "end_char_idx", -1),
+                        f"{idx}_score": getattr(n, "score", 0),
+                    }
+                )
+                text = getattr(n, "text", "")
+                self.fields_info[f"{idx}_score"] = metadata[f"{idx}_score"]
+                self.fields_info[f"{idx}_text"] = text
+
+        self.event_buffer.append(
+            {
+                "id_": event.id_,
+                "event_type": event.class_name(),
+                "span_id": event.span_id,
+                "timestamp": event.timestamp.timestamp(),
+                "metadata": metadata,
+            }
+        )
+
+    def new_span(
         self,
-        event_type: CBEventType,
-        payload: Optional[Dict[str, Any]] = None,
-        event_id: str = None,
-    ) -> None:
+        id_: str,
+        bound_args: inspect.BoundArguments,
+        instance: Optional[Any] = None,
+        parent_span_id: Optional[str] = None,
+        tags: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> Optional[SimpleSpan]:
         """
-        Store event end data by event type. Executed at the end of an event.
+        Create a new span using the SimpleSpan class. If the span is the root span, it generates a new trace ID.
 
         Args:
-            event_type (CBEventType): The event type to store.
-            payload (Dict[str, Any], optional): The payload to store.
-            event_id (str, optional): The event id to store.
-        """
+            id_ (str): The unique identifier for the new span.
+            bound_args (inspect.BoundArguments): The arguments that were bound to when the span was created.
+            instance (Optional[Any], optional): The instance associated with the span, if present. Defaults to None.
+            parent_span_id (Optional[str], optional): The identifier of the parent span. Defaults to None.
+            tags (Optional[Dict[str, Any]], optional): Additional information about the span. Defaults to None.
 
-        event = CBEvent(event_type, payload=payload, id_=event_id)
-        self.events_data[event_id].append(event)
+        Returns:
+            Optional[SimpleSpan]: The newly created SimpleSpan object if the span is successfully created.
+        """
+        trace_id, root_span_id = context_root.get()
+
+        if not parent_span_id:
+            trace_id = str(uuid.uuid4())
+            root_span_id = id_
+            context_root.set((trace_id, root_span_id))
+
+        if "workflow.run" in id_.lower():
+            self.fields_info["query"] = bound_args.kwargs["query"]
+        if "workflow._done" in id_.lower():
+            self.fields_info["response"] = bound_args.kwargs["response"]
+
+        return SimpleSpan(id_=id_, parent_id=parent_span_id, tags=tags or {})
+
+    def prepare_to_exit_span(
+        self,
+        id_: str,
+        bound_args: inspect.BoundArguments,
+        instance: Optional[Any] = None,
+        result: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> Optional[SimpleSpan]:
+        """
+        Logic to exit the span. It stores the span information in the trace buffer.
+        If the trace has ended and and belongs to specific components, it logs the buffered data to Argilla.
+
+            Args:
+                id_ (str): The unique identifier of the span to be exited.
+                bound_args (inspect.BoundArguments): The arguments that were bound to the span's function during its invocation.
+                instance (Optional[Any], optional):  The instance associated with the span, if applicable.. Defaults to None.
+                result (Optional[Any], optional): The output or result produced by the span's execution.. Defaults to None.
+
+            Returns:
+                Optional[SimpleSpan]:  The exited SimpleSpan object if the span exists and the trace is active; otherwise, None.
+        """
+        trace_id, root_span_id = context_root.get()
+        if not trace_id:
+            return None
+
+        span = self.open_spans[id_]
+        span = cast(SimpleSpan, span)
+        span.end_time = datetime.now()
+        span.duration = round((span.end_time - span.start_time).total_seconds(), 4)
+
+        self.span_buffer.append(
+            {
+                "id_": span.id_,
+                "parent_id": span.parent_id,
+                "start_time": span.start_time.timestamp(),
+                "end_time": span.end_time.timestamp(),
+                "duration": span.duration,
+            }
+        )
+
+        with self.lock:
+            self.completed_spans += [span]
+
+        if id_ == root_span_id and any(
+            term.lower() in id_.lower() for term in ["AgentRunner", "QueryEngine"]
+        ):
+            self._log_to_argilla(
+                trace_id=trace_id,
+                span_buffer=self.span_buffer,
+                event_buffer=self.event_buffer,
+                fields_info=self.fields_info,
+            )
+            self.span_buffer.clear()
+            self.event_buffer.clear()
+            self.fields_info.clear()
+            context_root.set((None, None))
+        elif id_ == root_span_id and not any(
+            term.lower() in id_.lower() for term in ["Workflow.run", "Workflow._done"]
+        ):
+            self.span_buffer.clear()
+            self.event_buffer.clear()
+            self.fields_info.clear()
+            context_root.set((None, None))
+
+        return span
+
+    def prepare_to_drop_span(
+        self,
+        id_: str,
+        bound_args: inspect.BoundArguments,
+        instance: Optional[Any] = None,
+        err: Optional[BaseException] = None,
+        **kwargs: Any,
+    ) -> None:
+        """
+        Logic to drop the span. If the trace has ended, it clears the data.
+
+        Args:
+            id_ (str): The unique identifier of the span to be dropped.
+            bound_args (inspect.BoundArguments): The arguments that were bound to the span function during its invocation.
+            instance (Optional[Any], optional): The instance associated with the span, if applicable. Defaults to None.
+            err (Optional[BaseException], optional): An exception that caused the span to be dropped, if any. Defaults to None.
+
+        Returns:
+            None:
+        """
+        trace_id, root_span_id = context_root.get()
+        if not trace_id:
+            return None
+
+        if id_ in self.open_spans:
+            with self.lock:
+                span = self.open_spans[id_]
+                self.dropped_spans += [span]
+
+        if "workflow.run" in root_span_id.lower():
+            self._log_to_argilla(
+                trace_id=trace_id,
+                span_buffer=self.span_buffer,
+                event_buffer=self.event_buffer,
+                fields_info=self.fields_info,
+            )
+            self.span_buffer.clear()
+            self.event_buffer.clear()
+            self.fields_info.clear()
+            context_root.set((None, None))
+
+        if id_ == root_span_id:
+            self.span_buffer.clear()
+            self.event_buffer.clear()
+            self.fields_info.clear()
+            context_root.set((None, None))
+
+        return None
+
+    def _log_to_argilla(
+        self,
+        trace_id: str,
+        span_buffer: List[Dict[str, Any]],
+        event_buffer: List[Dict[str, Any]],
+        fields_info: Dict[str, Any],
+    ) -> None:
+        """Logs the data in the trace buffer to Argilla."""
+
+        message = [
+            {"role": "user", "content": fields_info["query"]},
+            {"role": "assistant", "content": fields_info["response"]},
+        ]
+        tree_structure = _create_tree_structure(span_buffer, event_buffer)
+        tree = _create_svg(tree_structure)
+
+        fields = {
+            "chat": message,
+            "time-details": tree,
+        }
+        if self.number_of_retrievals > 0:
+            score_keys = filter(lambda k: k.endswith("_score"), fields_info.keys())
+            text_keys = filter(lambda k: k.endswith("_text"), fields_info.keys())
+
+            scores = "\n".join(
+                f"{key.replace('_score', '').replace('_', ' ').capitalize()}: {fields_info[key]}"
+                for key in islice(score_keys, self.number_of_retrievals)
+            )
+            fields["retrieved_document_scores"] = scores
+
+            for key in islice(text_keys, self.number_of_retrievals):
+                idx = key.split("_")[-2]
+                fields[f"retrieved_document_{idx}"] = fields_info[key]
+
+        metadata = self._process_metadata(span_buffer, event_buffer)
+        self._add_metadata_properties(metadata)
+
+        records = [Record(id=trace_id, fields=fields, metadata=metadata)]
+        self.dataset.records.log(records=records)
+
+    def _process_metadata(
+        self, span_buffer: List[Dict[str, Any]], event_buffer: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Process the metadata to be logged to Argilla."""
+        metadata_to_log = {}
+
+        for span in span_buffer:
+            key_prefix = span["id_"].split(".")[0].lower()
+            metadata_to_log[f"{key_prefix}_start_time"] = span["start_time"]
+            metadata_to_log[f"{key_prefix}_end_time"] = span["end_time"]
+            metadata_to_log[f"{key_prefix}_duration"] = span["duration"]
+
+        for event in event_buffer:
+            key_prefix = event["event_type"].lower()
+            metadata_to_log[f"{key_prefix}_timestamp"] = event["timestamp"]
+            if event["metadata"]:
+                metadata_to_log.update(event["metadata"])
+
+        metadata_to_log["total_duration"] = sum(
+            span["duration"] for span in span_buffer
+        )
+        metadata_to_log["total_spans"] = len(span_buffer)
+        metadata_to_log["total_events"] = len(event_buffer)
+
+        return metadata_to_log
+
+    def _add_metadata_properties(self, metadata: Dict[str, Any]) -> None:
+        """Add metadata properties to the dataset if they do not exist."""
+        existing_metadata = [
+            existing_metadata.name
+            for existing_metadata in self.dataset.settings.metadata
+        ]
+        for mt in metadata.keys():
+            if mt not in existing_metadata:
+                if isinstance(metadata[mt], str):
+                    self.dataset.settings.metadata.add(TermsMetadataProperty(name=mt))
+
+                elif isinstance(metadata[mt], int):
+                    self.dataset.settings.metadata.add(IntegerMetadataProperty(name=mt))
+
+                elif isinstance(metadata[mt], float):
+                    self.dataset.settings.metadata.add(FloatMetadataProperty(name=mt))
+
+        self.dataset.update()
